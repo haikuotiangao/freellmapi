@@ -1,7 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router-dom'
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ChevronDown, KeyRound, LogOut, Menu, MoreHorizontal, RefreshCw, Search, Settings, Sparkles } from 'lucide-react'
+import { ChevronDown, KeyRound, LogOut, Menu, MoreHorizontal, Search, Settings } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -19,12 +19,7 @@ import { CommandPalette } from '@/components/command-palette'
 import { openCommandPalette } from '@/components/command-palette-state'
 import { ErrorBoundary } from '@/components/error-boundary'
 import { SettingsDialog } from '@/components/settings-dialog'
-import { UpdatesDialog } from '@/components/updates-dialog'
-import { OPEN_UPDATES_EVENT } from '@/lib/updates'
 import { Toaster } from '@/components/toaster'
-import { UpdateReminder } from '@/components/update-reminder'
-import { NewBuildPrompt } from '@/components/new-build-prompt'
-import { usePremium } from '@/hooks/use-premium'
 import { I18nProvider, useI18n } from '@/i18n'
 import { logout } from '@/lib/api'
 import { toast } from '@/lib/toast'
@@ -45,7 +40,6 @@ import EmbeddingDetailPage from '@/pages/EmbeddingDetailPage'
 import AnalyticsPage from '@/pages/AnalyticsPage'
 import LogsPage from '@/pages/LogsPage'
 import TuningPage from '@/pages/TuningPage'
-import PremiumPage from '@/pages/PremiumPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import AgentsPage from '@/pages/AgentsPage'
 
@@ -76,7 +70,6 @@ const navItems = [
   { to: '/keys', labelKey: 'nav.keys' },
   { to: '/agents', labelKey: 'nav.agents' },
   { to: '/analytics', labelKey: 'nav.analytics' },
-  { to: '/premium', labelKey: 'nav.premium' },
 ]
 
 // The modality pages behind "Models"; surfaced in the nav dropdown and
@@ -97,6 +90,9 @@ const modelItems = [
 // deliberately kept out of navItems so the top bar does not grow a seventh entry.
 const analyticsItems = [
   { to: '/analytics', labelKey: 'nav.analytics' },
+  // Fork-only: opens the recent-calls dialog immediately, without scrolling
+  // past the charts. The query param is read by AnalyticsPage.
+  { to: '/analytics?recent=1', labelKey: 'nav.recentCalls' },
   { to: '/logs', labelKey: 'nav.logs' },
   // Fork-only: free/paid classification, bulk catalog passes, provider limits.
   // Parked under Analytics so the top bar does not grow an eighth entry.
@@ -177,48 +173,31 @@ if (isDesktopApp) {
   }
 }
 
+// Fork-only: no upgrade / license / update-check surface. This install is a
+// local, free-quota-only build; those entries pointed at a hosted service the
+// operator does not use, so the account menu is just settings + credentials.
 function AccountMenuItems({
-  showUpgrade,
-  upgradeLabel,
   settingsLabel,
-  updatesLabel,
   signOutLabel,
   changeEmailLabel,
   changePasswordLabel,
-  onUpgrade,
   onOpenSettings,
-  onOpenUpdates,
   onChangeEmail,
   onChangePassword,
 }: {
-  showUpgrade: boolean
-  upgradeLabel: string
   settingsLabel: string
-  updatesLabel: string
   signOutLabel: string
   changeEmailLabel: string
   changePasswordLabel: string
-  onUpgrade: () => void
   onOpenSettings: () => void
-  onOpenUpdates: () => void
   onChangeEmail: () => void
   onChangePassword: () => void
 }) {
   return (
     <>
-      {showUpgrade && (
-        <DropdownMenuItem onClick={onUpgrade}>
-          <Sparkles />
-          {upgradeLabel}
-        </DropdownMenuItem>
-      )}
       <DropdownMenuItem onClick={onOpenSettings}>
         <Settings />
         {settingsLabel}
-      </DropdownMenuItem>
-      <DropdownMenuItem onClick={onOpenUpdates}>
-        <RefreshCw />
-        {updatesLabel}
       </DropdownMenuItem>
       {/* Desktop signs in with a hidden local account, so it has no credentials
           to change and no session to end. */}
@@ -248,16 +227,7 @@ function Navbar() {
   const location = useLocation()
   const navigate = useNavigate()
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [updatesOpen, setUpdatesOpen] = useState(false)
-  // The update pill lives outside the navbar; it asks for this dialog by event.
-  useEffect(() => {
-    const open = () => setUpdatesOpen(true)
-    window.addEventListener(OPEN_UPDATES_EVENT, open)
-    return () => window.removeEventListener(OPEN_UPDATES_EVENT, open)
-  }, [])
   const [credentialsMode, setCredentialsMode] = useState<'password' | 'email' | null>(null)
-  const { data: premium, licensed, isLoading: premiumLoading, isError: premiumError } = usePremium()
-  const showUpgrade = Boolean(premium) && !licensed && !premiumLoading && !premiumError
 
   return (
     <>
@@ -331,16 +301,11 @@ function Navbar() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 <AccountMenuItems
-                  showUpgrade={showUpgrade}
-                  upgradeLabel={t('nav.upgrade')}
                   settingsLabel={t('nav.settings')}
-                  updatesLabel={t('settings.checkForUpdates')}
                   signOutLabel={t('nav.signOut')}
                   changeEmailLabel={t('auth.changeEmail')}
                   changePasswordLabel={t('auth.changePassword')}
-                  onUpgrade={() => navigate('/premium')}
                   onOpenSettings={() => setSettingsOpen(true)}
-                  onOpenUpdates={() => setUpdatesOpen(true)}
                   onChangeEmail={() => setCredentialsMode('email')}
                   onChangePassword={() => setCredentialsMode('password')}
                 />
@@ -387,16 +352,11 @@ function Navbar() {
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <AccountMenuItems
-                  showUpgrade={showUpgrade}
-                  upgradeLabel={t('nav.upgrade')}
                   settingsLabel={t('nav.settings')}
-                  updatesLabel={t('settings.checkForUpdates')}
                   signOutLabel={t('nav.signOut')}
                   changeEmailLabel={t('auth.changeEmail')}
                   changePasswordLabel={t('auth.changePassword')}
-                  onUpgrade={() => navigate('/premium')}
                   onOpenSettings={() => setSettingsOpen(true)}
-                  onOpenUpdates={() => setUpdatesOpen(true)}
                   onChangeEmail={() => setCredentialsMode('email')}
                   onChangePassword={() => setCredentialsMode('password')}
                 />
@@ -406,7 +366,6 @@ function Navbar() {
         </div>
       </header>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      <UpdatesDialog open={updatesOpen} onOpenChange={setUpdatesOpen} />
       {credentialsMode && (
         <ChangeCredentialsModal mode={credentialsMode} onClose={() => setCredentialsMode(null)} />
       )}
@@ -505,7 +464,9 @@ function App() {
                       <Route path="/analytics" element={<AnalyticsPage />} />
                       <Route path="/logs" element={<LogsPage />} />
                       <Route path="/tuning" element={<TuningPage />} />
-                      <Route path="/premium" element={<PremiumPage />} />
+                      {/* Upgrade / license UI removed in this fork: old bookmarks
+                          land on the local tuning console instead of a dead page. */}
+                      <Route path="/premium" element={<Navigate to="/tuning" replace />} />
                       <Route path="/test" element={<Navigate to="/playground" replace />} />
                       <Route path="/health" element={<Navigate to="/keys" replace />} />
                       <Route path="*" element={<NotFoundPage />} />
@@ -514,8 +475,6 @@ function App() {
                 </PageContainer>
                 <Toaster />
                 <CommandPalette />
-                <UpdateReminder />
-                <NewBuildPrompt />
               </AppShell>
             </AuthGate>
           </BrowserRouter>

@@ -97,12 +97,101 @@ scope='model' 的档位永远不会被当成账户闸门读——那正是上面
 | POST | `/disable-paid` | `{ reclassify?: true }` 先重算再禁用 |
 | POST | `/enable-free` | 反向操作，只动免费档 |
 | POST | `/junk` | `{ action: 'recompute' \| 'disable' \| 'resort' \| 'all', confirm?: true }` |
-| GET | `/limits` | 全部厂商限流配置 |
+| GET | `/limits` | 全部「已配置」的厂商限流行 |
+| GET | `/limits/roster` | **每一个已注册厂商**：官方额度说明 + 可编辑配置，未配置也给一行 |
 | PUT | `/limits/:platform` | 局部更新，未传字段保持原值 |
 | POST | `/limits/seed` | 重新播种内置档位（不覆盖已存在行） |
-| POST | `/refresh` | `{ platforms?: string[] }` 刷新厂商模型 |
+| POST | `/refresh` | `{ platforms?, skipKeyless?, recomputeTiers? }` 刷新**全部**厂商模型 |
+| GET | `/routing-tiers` | 梯队开关、轮数、各档模型数 |
+| PUT | `/routing-tiers` | `{ enabled?, rounds? }`，轮数夹在 1–10 |
+| POST | `/routing-tiers/assign` | `{ includeManual? }` 按能力自动分组 |
+| GET | `/routing-tiers/models` | `?tier=&q=&limit=` 可编辑的成员列表 |
+| PUT | `/routing-tiers/models/:id` | `{ tier: 1\|2\|3 }` 手动移动单个模型 |
 
-前端入口：侧栏 Analytics → **Tuning**（`/tuning`）。
+前端入口：侧栏 Analytics → **Tuning**（`/tuning`）。「一键刷新所有厂商免费模型」就在这一页**最上面**，
+页面标题右侧也放了同一个按钮。侧栏 Analytics 的下拉菜单里另有「最近调用」。
+
+---
+
+## 第二轮：本地化收尾（v0.16.29）
+
+第一轮只解决了「免费额度」这一件事，界面和可观测性没跟上。这一轮按实际操作路径重做。
+
+### 1. 一键刷新覆盖所有厂商
+
+旧实现从 `api_keys` 反推要问谁：没配密钥的厂商**连报告里都不出现**。
+现在改为从 `getAllProviders()` 枚举全部已注册厂商：
+
+- OpenAI 兼容 + 有可用密钥 → 逐个问 `/models`（仍串行，避免触发对方限流）；
+- OpenAI 兼容 + `keyless` → 用空凭据匿名问（适配器本来就不发 `Authorization` 头）；
+- 其余（Google / Cohere / 搜索 / 决策 / 媒体适配器 / 自定义端点）→ 进 `skipped`，附**具体原因**。
+
+报告新增 `skipped[]` 与 `providersRegistered / platformsSkipped`，前端可展开逐家看为什么没刷。
+仍然**只增不删**：上游没列出的模型只报 `missing`，不会因为分页或临时故障清空链路。
+
+### 2. 三梯队 + 可配轮数
+
+新增迁移 `20261002_000001_model_routing_tier.ts`：`models.routing_tier`（默认 3）、
+`routing_tier_source`（`auto` / `manual`）。服务和设置见 `services/tier-routing.ts`：
+`routing_tier_enabled`（默认开）、`tier1_rounds`（默认 2，上限 10）。
+
+`buildTierWalkOrder()` 把策略排好的链展开为：第一梯队走 N 遍 → 第二梯队 → 其他梯队。
+接入点在 `router.ts` 的 `routeRequest()`，位于所有建链路径汇聚之后、发请求循环之前。
+同一梯队内部保持策略原顺序；重复出现的第一梯队行不是重复发请求 ——
+`skipModels` / `skipPlatforms` 已经记下上一轮被排除的行，第二轮只会重试仍可能恢复的
+（例如刚 429 的），硬失败直接跳过。
+
+「按能力自动分组」把能力档 1→第一梯队、2→第二梯队、其余→其他梯队；
+`routing_tier_source='manual'` 的行永不被覆盖，除非显式勾选「连手动指定的也覆盖」。
+前端提供按梯队筛选、搜索、逐行下拉改梯队。
+
+**默认分组不是空话**：迁移给每行 `routing_tier=3`，若不做初始化，开机时第一梯队是空的、
+「默认优先第一梯队」会变成空转。所以 `ensureDefaultRoutingTiers()` 挂在三条数据落地路径上：
+开机引导（`index.ts`）、目录同步 apply 之后（`catalog-sync.ts`）、一键刷新之后（`model-refresh.ts`），
+都在 `recomputeCapabilityTiers()` 之后调用。它等价于 `assignRoutingTiersByAbility(db, false)`：
+把 `auto` 行按最新能力档重新分好，但 `manual` 行原地不动 —— 用户手改过的模型，
+重启、目录同步、刷新都不会把它挪走。有专门测试覆盖「开机后第一梯队非空」和「后续 sync 不覆盖手动行」。
+
+### 3. 分析页顶部一键看最近调用
+
+- 顶栏 **Analytics 下拉菜单**新增「最近调用」→ `/analytics?recent=1`，`AnalyticsPage` 读到就弹窗；
+- 页面标题右侧同一个按钮，标题正下方还有一条**实时状态条**，直接显示最近一次
+  「请求模型 → 实际厂商 / 实际模型 → 成功或失败 → 错误摘要」，不用滚到图表底部；
+- 弹窗列出时间 / 请求模型 / 实际厂商 / 实际模型 / 结果 / 尝试数 / 耗时 / 错误，
+  打开期间每 5 秒刷新；点任意行进入原有的故障转移链路详情（每家厂商、每个模型、每把密钥）。
+- 命令面板（Ctrl/⌘ K）也加了「调优」和「最近调用」两个入口。
+
+### 4. 全部厂商限制：一个界面说明 + 配置
+
+`services/provider-roster.ts` 提供 `providerLimitRoster()`：
+遍历**全部**已注册厂商，每个都带 `name / kind / keyless / quotaFacts / notes / limits`。
+`QUOTA_FACTS` 里逐家写明官方免费额度的形状（共享日配额、月信用点、按模型计量、
+需要实名/Telegram 验证、只有付费没有免费档……），没有公布数值的就直说没有，不编数字。
+调优页表格把「官方说明」和「本地实际生效的 RPM/RPD/TPM/TPD/并发/计量范围/备注」并排，
+可搜索、可只看已生效、可逐行编辑保存（空 = 不额外限流）。
+
+### 5. 移除高级 / 检查更新 / 升级
+
+- 设置对话框删掉「Advanced」分区（只剩 General / Compression / Preview）；
+- 顶栏账户菜单去掉「Upgrade」「Check for Updates」，顶栏去掉 Premium 入口；
+- 命令面板去掉 Premium 页，改指向 Tuning / 最近调用；
+- `/premium` 路由重定向到 `/tuning`；搜索就绪提示里的 premium 链接改指 Tuning；
+- 移除更新提醒、新构建提示、更新对话框的挂载；
+- 桌面端托盘菜单删掉「检查更新」，`initUpdater({ autoCheckEnabled: () => false })`
+  关掉后台自动检查（IPC 仍保留，避免 preload 兼容问题）。
+- `PremiumPage.tsx` / `updates-dialog.tsx` 等文件**保留但不挂载**：以后再合上游时少一堆冲突，
+  但用户界面里已经完全没有许可证、升级、检查更新的入口。
+
+### 6. i18n
+
+60 个语言包补齐本轮 57 个新键（`nav.recentCalls`、`tuning.tier*`、`tuning.roster*`、
+`tuning.reason*`、`analytics.quickView*`），简/繁中文给了对应文案，其余沿用英文。
+`node scripts/check-i18n.mjs` → 60 locales / 1374 keys 通过。
+
+### 版本
+
+桌面版本 `0.16.29`（`desktop/package.json` 与 lock 同步），发布 tag 必须是 `v0.16.29`，
+工作流的「Verify desktop version matches the tag」会校验。
 
 ## 环境变量
 

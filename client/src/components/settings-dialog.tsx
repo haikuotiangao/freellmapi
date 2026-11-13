@@ -11,7 +11,6 @@ import {
   Search,
   SlidersHorizontal,
   Sun,
-  Wrench,
   X,
 } from 'lucide-react'
 import {
@@ -280,19 +279,18 @@ const ENGINES = [
   { id: 'hard-budget', tKey: 'engineHardBudget', lossless: false },
 ] as const
 
-type SectionId = 'general' | 'compression' | 'advanced' | 'preview'
+type SectionId = 'general' | 'compression' | 'preview'
 
 const SECTIONS = [
   { id: 'general', tKey: 'sectionGeneral', icon: SlidersHorizontal },
   { id: 'compression', tKey: 'sectionCompression', icon: Gauge },
-  { id: 'advanced', tKey: 'sectionAdvanced', icon: Wrench },
   { id: 'preview', tKey: 'sectionPreview', icon: FlaskConical },
 ] as const satisfies ReadonlyArray<{ id: SectionId; tKey: string; icon: typeof Gauge }>
 
 type CompressionState = ReturnType<typeof useCompressionSettings>
 
 // Compression config/stats are loaded once per dialog opening and shared by the
-// Compression, Advanced and Preview sections, so switching sections never
+// Compression and Preview sections, so switching sections never
 // refetches or discards pending edits.
 function useCompressionSettings(open: boolean) {
   const { t } = useI18n()
@@ -409,57 +407,6 @@ function CompressionSection({ state }: { state: CompressionState }) {
           ))}
         </ul>
       </Row>
-    </>
-  )
-}
-
-function AdvancedSection({ state }: { state: CompressionState }) {
-  const { t } = useI18n()
-  const { config, patch } = state
-  if (!config) return null
-
-  return (
-    <>
-      <SectionHeader title={t('settings.sectionAdvanced')} description={t('settings.advancedDescription')} />
-      <Row
-        label={t('settings.compressionAutoTrigger')}
-        hint={t('settings.compressionAutoTriggerHelp')}
-        control={(
-          <input
-            type="number"
-            min={1}
-            value={config.autoTriggerEstTokens ?? ''}
-            onChange={event => patch({
-              autoTriggerEstTokens: event.target.value ? Number(event.target.value) : null,
-            })}
-            placeholder="32000"
-            aria-label={t('settings.compressionAutoTrigger')}
-            className="h-9 w-32 rounded-lg border border-input bg-transparent px-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-          />
-        )}
-      />
-      <Row
-        label={t('settings.compressionPrefixFreeze')}
-        hint={t('settings.compressionPrefixFreezeHelp')}
-        control={(
-          <Switch
-            aria-label={t('settings.compressionPrefixFreeze')}
-            checked={config.prefixFreeze}
-            onCheckedChange={prefixFreeze => patch({ prefixFreeze })}
-          />
-        )}
-      />
-      <Row
-        label={t('settings.compressionTrustProjectFilters')}
-        hint={t('settings.compressionTrustProjectFiltersHelp')}
-        control={(
-          <Switch
-            aria-label={t('settings.compressionTrustProjectFilters')}
-            checked={config.trustProjectFilters}
-            onCheckedChange={trustProjectFilters => patch({ trustProjectFilters })}
-          />
-        )}
-      />
     </>
   )
 }
@@ -659,7 +606,6 @@ export function SettingsDialog({
             {compressionSection && config && (
               <>
                 {section === 'compression' && <CompressionSection state={state} />}
-                {section === 'advanced' && <AdvancedSection state={state} />}
                 {section === 'preview' && <PreviewSection state={state} />}
               </>
             )}

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -19,6 +20,7 @@ import {
   Gauge,
   GitBranch,
   Globe,
+  History,
   KeyRound,
   Layers,
   List,
@@ -33,6 +35,7 @@ import { apiFetch } from '@/lib/api'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogPopup, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PageHeader } from '@/components/page-header'
@@ -558,8 +561,130 @@ const chartVars = `
 .dark .analytics-viz { --series-a: #3987e5; --series-b: #199e70; }
 `
 
+// ── One-click recent-calls view ────────────────────────────────────────────
+//
+// The full recent-calls table lives at the very bottom of this page, below a
+// dozen charts. The operator needs to answer "which concrete provider/model is
+// serving right now, and did it work?" without scrolling, so the top nav's
+// Analytics menu carries a "Recent calls" entry that opens this dialog from
+// anywhere in the app (?recent=1 on /analytics). Rows name BOTH the model the
+// client asked for and the provider+model that actually served it, with the
+// outcome and error text inline. Clicking a row opens the attempt-ladder
+// drill-down below.
+function RecentCallsQuickView({
+  open, onClose, rows, total, onSelect,
+}: {
+  open: boolean
+  onClose: () => void
+  rows: RecentCallRow[]
+  total: number
+  onSelect: (id: number) => void
+}) {
+  const { t } = useI18n()
+  const succeeded = rows.filter(r => r.status === 'success').length
+  const failed = rows.filter(r => r.status !== 'success' && r.status !== 'canceled').length
+  const canceled = rows.length - succeeded - failed
+
+  return (
+    <Dialog open={open} onOpenChange={o => { if (!o) onClose() }}>
+      <DialogPopup maxWidth="max-w-5xl" className="flex max-h-[85vh] flex-col overflow-hidden">
+        <div className="mb-3 flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <History className="size-4 text-muted-foreground" aria-hidden="true" />
+              <DialogTitle>{t('analytics.quickViewTitle')}</DialogTitle>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{t('analytics.quickViewHint')}</p>
+          </div>
+          <DialogClose
+            aria-label={t('common.dismiss')}
+            className="-mr-1 rounded-lg p-1 text-muted-foreground/70 transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <X className="size-4" />
+          </DialogClose>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <Badge variant="secondary">{t('analytics.quickViewLoaded').replace('{n}', String(rows.length)).replace('{total}', String(total))}</Badge>
+          <Badge variant="outline">{t('common.success')}: {succeeded}</Badge>
+          <Badge variant="destructive">{t('analytics.quickViewFailed')}: {failed}</Badge>
+          <Badge variant="outline">{t('analytics.quickViewCanceled')}: {canceled}</Badge>
+          <span className="text-muted-foreground">{t('analytics.quickViewLive')}</span>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto rounded-xl border">
+          <Table>
+            <TableHeader className="sticky top-0 bg-card">
+              <TableRow>
+                <TableHead className="pl-4">{t('analytics.time')}</TableHead>
+                <TableHead>{t('analytics.quickViewRequested')}</TableHead>
+                <TableHead>{t('common.provider')}</TableHead>
+                <TableHead>{t('analytics.quickViewServedModel')}</TableHead>
+                <TableHead>{t('common.status')}</TableHead>
+                <TableHead className="text-right">{t('analytics.attempts')}</TableHead>
+                <TableHead className="text-right">{t('analytics.latency')}</TableHead>
+                <TableHead className="pr-4">{t('analytics.quickViewError')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map(r => (
+                <TableRow key={r.id} className="cursor-pointer" onClick={() => onSelect(r.id)}>
+                  <TableCell className="pl-4 text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                    {formatSqliteUtcToLocalTime(r.createdAt, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </TableCell>
+                  <TableCell className="text-xs max-w-[180px] truncate" title={r.requestedModel ?? r.modelId}>
+                    {r.requestedModel ?? '—'}
+                  </TableCell>
+                  <TableCell className="text-xs font-medium whitespace-nowrap">
+                    {r.platform === 'custom' && r.keyLabel ? r.keyLabel : r.platform}
+                  </TableCell>
+                  <TableCell className="text-xs max-w-[220px] truncate font-medium" title={r.modelId}>
+                    {r.modelId}
+                  </TableCell>
+                  <TableCell className={`text-xs font-medium ${statusTextClass(r.status)}`}>
+                    {r.status === 'success' ? t('common.success') : r.status === 'canceled' ? t('analytics.quickViewCanceled') : t('analytics.quickViewFailed')}
+                  </TableCell>
+                  <TableCell className="text-right text-xs tabular-nums">{r.attemptCount > 0 ? r.attemptCount : '—'}</TableCell>
+                  <TableCell className="text-right text-xs tabular-nums whitespace-nowrap">{r.latencyMs} ms</TableCell>
+                  <TableCell className="pr-4 text-xs text-destructive max-w-[240px] truncate" title={r.error ?? undefined}>
+                    {r.error ?? '—'}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                    {t('common.noData')}
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">{t('analytics.quickViewDrillHint')}</p>
+      </DialogPopup>
+    </Dialog>
+  )
+}
+
 export default function AnalyticsPage() {
   const { t } = useI18n()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // ?recent=1 is what the top nav's "Recent calls" entry navigates to. Reading
+  // it as an effect (rather than deriving `open` from the URL) lets the dialog
+  // be closable without fighting the router on every render.
+  const [quickViewOpen, setQuickViewOpen] = useState(false)
+  useEffect(() => {
+    if (searchParams.get('recent') === '1') setQuickViewOpen(true)
+  }, [searchParams])
+  const closeQuickView = () => {
+    setQuickViewOpen(false)
+    if (searchParams.has('recent')) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('recent')
+      setSearchParams(next, { replace: true })
+    }
+  }
   const [range, setRange] = useState<TimeRange>(storedRange)
   const updateRange = (r: TimeRange) => {
     setRange(r)
@@ -652,6 +777,9 @@ export default function AnalyticsPage() {
       if (platformFilter !== 'all') params.set('provider', platformFilter)
       return apiFetch<RecentCallsResponse>(`/api/analytics/requests?${params}`)
     },
+    // While the one-click view is open, keep it live: "which provider is
+    // serving right now" is a current-state question, not a historical one.
+    refetchInterval: quickViewOpen ? 5000 : false,
   })
 
   // Per-table column sort (client-side, remembered per table). `null` keeps
@@ -742,17 +870,61 @@ export default function AnalyticsPage() {
         title={t('analytics.title')}
         description={range === 'all' ? t('analytics.rangeAllNote') : t('analytics.description')}
         actions={
-          <SegmentedControl
-            value={range}
-            onValueChange={updateRange}
-            options={TIME_RANGES.map(r => ({
-              value: r,
-              label: t(RANGE_LABEL_KEYS[r]),
-            }))}
-            ariaLabel={t('analytics.title')}
-          />
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setQuickViewOpen(true)}
+              title={t('analytics.quickViewHint')}
+            >
+              <History className="size-3.5" />
+              {t('analytics.quickViewButton')}
+            </Button>
+            <SegmentedControl
+              value={range}
+              onValueChange={updateRange}
+              options={TIME_RANGES.map(r => ({
+                value: r,
+                label: t(RANGE_LABEL_KEYS[r]),
+              }))}
+              ariaLabel={t('analytics.title')}
+            />
+          </>
         }
       />
+
+      {/* Live "what is being called right now" strip — the reason the nav menu
+          entry exists: no scrolling past a dozen charts to answer this. */}
+      {((recentCalls?.rows?.length ?? 0) > 0) && (() => {
+        const last = recentCalls!.rows[0]
+        return (
+          <button
+            type="button"
+            onClick={() => setQuickViewOpen(true)}
+            className="mb-5 flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border bg-card px-4 py-2.5 text-left text-xs transition-colors hover:bg-muted/50"
+          >
+            <span className="flex items-center gap-1.5 font-medium">
+              <History className="size-3.5 text-muted-foreground" />
+              {t('analytics.quickViewLatest')}
+            </span>
+            <span className="text-muted-foreground">
+              {formatSqliteUtcToLocalTime(last.createdAt, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
+            <span className="text-muted-foreground">
+              {last.requestedModel ?? t('analytics.quickViewAuto')}
+              {' → '}
+            </span>
+            <span className="font-medium">
+              {last.platform === 'custom' && last.keyLabel ? last.keyLabel : last.platform} / {last.modelId}
+            </span>
+            <span className={statusTextClass(last.status)}>
+              {last.status === 'success' ? t('common.success') : last.status}
+            </span>
+            {last.error && <span className="max-w-64 truncate text-destructive" title={last.error}>{last.error}</span>}
+            <span className="ms-auto text-muted-foreground">{t('analytics.quickViewOpenHint')}</span>
+          </button>
+        )
+      })()}
 
       <div className="space-y-6">
         {/* Summary stats */}
@@ -1254,6 +1426,13 @@ export default function AnalyticsPage() {
       </div>
 
       <RequestDetailDialog requestId={detailId} onClose={() => setDetailId(null)} />
+      <RecentCallsQuickView
+        open={quickViewOpen}
+        onClose={closeQuickView}
+        rows={recentCallRows}
+        total={recentCalls?.total ?? 0}
+        onSelect={id => { closeQuickView(); setDetailId(id) }}
+      />
     </div>
   )
 }

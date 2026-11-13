@@ -26,6 +26,7 @@ import { installGracefulShutdown } from './lib/graceful-shutdown.js';
 import { seedProviderLimits } from './services/provider-limits.js';
 import { reclassifyCatalogModelTiers } from './services/cost-tier.js';
 import { recomputeCapabilityTiers } from './services/capability-tier.js';
+import { ensureDefaultRoutingTiers } from './services/tier-routing.js';
 
 // Before any other statement runs, so no provider key can reach stdout — users
 // paste server output into bug reports. Module scope, not inside main(), so it
@@ -57,6 +58,10 @@ async function main() {
   seedProviderLimits();
   reclassifyCatalogModelTiers();
   recomputeCapabilityTiers();
+  // A fresh install (or a restored backup) has every row in "other". Seed the
+  // three operator strings from the ability tiers just computed, so tier 1 is
+  // actually the default first choice. Manual placements survive this pass.
+  ensureDefaultRoutingTiers();
   applyDeclarativeConfigFromEnv();
   // After initDb: the unknown-model half of this check reads the catalog.
   warnOnRoutingOverrideDrift();

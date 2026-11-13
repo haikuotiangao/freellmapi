@@ -24,6 +24,23 @@ import {
   setProviderLimits,
   type ProviderLimitPatch,
 } from '../services/provider-limits.js';
+import {
+  providerLimitRoster,
+} from '../services/provider-roster.js';
+import {
+  TIER_ROUTING_ENABLED_KEY,
+  TIER1_ROUNDS_KEY,
+  DEFAULT_TIER1_ROUNDS,
+  MAX_TIER1_ROUNDS,
+  isTierRoutingEnabled,
+  setTierRoutingEnabled,
+  getTier1Rounds,
+  setTier1Rounds,
+  assignRoutingTiersByAbility,
+  routingTierSummary,
+  setModelRoutingTier,
+  type RoutingTier,
+} from '../services/tier-routing.js';
 import { refreshProviderModels } from '../services/model-refresh.js';
 
 // ── Operator tuning surface ─────────────────────────────────────────────────
@@ -54,7 +71,118 @@ tuningRouter.get('/summary', (_req, res) => {
       count: row.count,
     })),
     enabledModels: enabled.n,
+    routingTiers: {
+      enabled: isTierRoutingEnabled(),
+      rounds: getTier1Rounds(),
+      defaultRounds: DEFAULT_TIER1_ROUNDS,
+      maxRounds: MAX_TIER1_ROUNDS,
+      counts: routingTierSummary(db),
+    },
   });
+});
+
+// ── Routing tiers (第一梯队 / 第二梯队 / 其他) ──────────────────────────────
+
+/** GET /api/tuning/routing-tiers — the operator strings' current shape. */
+tuningRouter.get('/routing-tiers', (_req, res) => {
+  res.json({
+    enabled: isTierRoutingEnabled(),
+    rounds: getTier1Rounds(),
+    defaultRounds: DEFAULT_TIER1_ROUNDS,
+    maxRounds: MAX_TIER1_ROUNDS,
+    counts: routingTierSummary(),
+  });
+});
+
+/** PUT /api/tuning/routing-tiers { enabled?: boolean, rounds?: number } */
+tuningRouter.put('/routing-tiers', (req, res) => {
+  const body = (req.body ?? {}) as { enabled?: unknown; rounds?: unknown };
+  if (body.enabled !== undefined) {
+    if (typeof body.enabled !== 'boolean') {
+      res.status(400).json({ error: { message: 'enabled must be a boolean' } });
+      return;
+    }
+    setTierRoutingEnabled(body.enabled);
+  }
+  if (body.rounds !== undefined) {
+    if (typeof body.rounds !== 'number' || !Number.isFinite(body.rounds)) {
+      res.status(400).json({ error: { message: 'rounds must be a number' } });
+      return;
+    }
+    setTier1Rounds(body.rounds);
+  }
+  res.json({
+    enabled: isTierRoutingEnabled(),
+    rounds: getTier1Rounds(),
+    settingKeys: [TIER_ROUTING_ENABLED_KEY, TIER1_ROUNDS_KEY],
+    counts: routingTierSummary(),
+  });
+});
+
+/**
+ * POST /api/tuning/routing-tiers/assign { includeManual?: boolean }
+ *
+ * The bulk "assign strings by ability" pass: capability tier 1 → routing tier
+ * 1, 2 → 2, the rest → 3. Hand-placed rows (routing_tier_source='manual') are
+ * left alone unless includeManual is true.
+ */
+tuningRouter.post('/routing-tiers/assign', (req, res) => {
+  const body = (req.body ?? {}) as { includeManual?: boolean };
+  const out = assignRoutingTiersByAbility(getDb(), body.includeManual === true);
+  res.json({ ...out, counts: routingTierSummary() });
+});
+
+/**
+ * GET /api/tuning/routing-tiers/models?tier=1&q=foo&limit=200
+ *
+ * The editable membership list behind the three strings. Returns the columns
+ * the dashboard needs to justify a placement (price tier, ability tier, source)
+ * rather than just ids, so a hand-placed row is visibly different from an
+ * auto-assigned one.
+ */
+tuningRouter.get('/routing-tiers/models', (req, res) => {
+  const db = getDb();
+  const tierRaw = typeof req.query.tier === 'string' ? Number.parseInt(req.query.tier, 10) : NaN;
+  const tier = tierRaw === 1 || tierRaw === 2 || tierRaw === 3 ? tierRaw : null;
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 120) : '';
+  const limitRaw = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 200;
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 1000) : 200;
+
+  const clauses = ['1 = 1'];
+  const args: (string | number)[] = [];
+  if (tier) { clauses.push('routing_tier = ?'); args.push(tier); }
+  if (q) { clauses.push('(model_id LIKE ? OR display_name LIKE ? OR platform LIKE ?)'); args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  args.push(limit);
+  const models = db.prepare(`
+    SELECT id, platform, model_id, display_name, price_tier, capability_tier,
+           routing_tier, routing_tier_source, enabled
+      FROM models
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY routing_tier ASC, capability_tier ASC, platform ASC, model_id ASC
+     LIMIT ?
+  `).all(...args);
+  res.json({ models, counts: routingTierSummary(db), limit });
+});
+
+/** PUT /api/tuning/routing-tiers/models/:id { tier: 1 | 2 | 3 } — one model. */
+tuningRouter.put('/routing-tiers/models/:id', (req, res) => {
+  const id = Number.parseInt(req.params.id as string, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: { message: 'invalid model id' } });
+    return;
+  }
+  const tier = (req.body ?? {}).tier;
+  if (tier !== 1 && tier !== 2 && tier !== 3) {
+    res.status(400).json({ error: { message: 'tier must be 1, 2 or 3' } });
+    return;
+  }
+  setModelRoutingTier(id, tier as RoutingTier);
+  const row = getDb().prepare('SELECT id, routing_tier, routing_tier_source FROM models WHERE id = ?').get(id);
+  if (!row) {
+    res.status(404).json({ error: { message: 'no such model' } });
+    return;
+  }
+  res.json({ model: row });
 });
 
 /** PUT /api/tuning/free-only  { enabled: boolean } */
@@ -132,6 +260,16 @@ tuningRouter.get('/limits', (_req, res) => {
   res.json({ limits: listProviderLimits() });
 });
 
+/**
+ * GET /api/tuning/limits/roster — EVERY registered provider with its editable
+ * profile and the quota facts quoted from the provider's own documentation.
+ * This is the single-page "全部厂商限制" table: configured rows first, and a
+ * row exists even when nothing is enforced yet (its fields are just empty).
+ */
+tuningRouter.get('/limits/roster', (_req, res) => {
+  res.json({ roster: providerLimitRoster() });
+});
+
 /** PUT /api/tuning/limits/:platform — partial update, undefined fields untouched. */
 tuningRouter.put('/limits/:platform', (req, res) => {
   const platform = req.params.platform;
@@ -165,13 +303,14 @@ tuningRouter.post('/limits/seed', (_req, res) => {
  */
 tuningRouter.post('/refresh', async (req, res, next) => {
   try {
-    const body = (req.body ?? {}) as { platforms?: string[]; recomputeTiers?: boolean };
+    const body = (req.body ?? {}) as { platforms?: string[]; recomputeTiers?: boolean; skipKeyless?: boolean };
     const platforms = Array.isArray(body.platforms)
       ? body.platforms.filter((p): p is string => typeof p === 'string' && p.length > 0)
       : undefined;
     const report = await refreshProviderModels(getDb(), {
       platforms: platforms?.length ? platforms : undefined,
       recomputeTiers: body.recomputeTiers !== false,
+      skipKeyless: body.skipKeyless === true,
     });
     res.json(report);
   } catch (err) {

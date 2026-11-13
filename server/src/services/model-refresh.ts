@@ -1,12 +1,14 @@
 import type { Db } from '../db/types.js';
 import { getDb } from '../db/index.js';
-import { getProvider } from '../providers/index.js';
+import { getAllProviders, getProvider } from '../providers/index.js';
 import { OpenAICompatProvider } from '../providers/openai-compat.js';
+import { encrypt } from '../lib/crypto.js';
 import type { Platform } from '@freellmapi/shared/types.js';
 import { discoverBuiltinModels } from './builtin-model-discovery.js';
 import type { DiscoveredModel } from './model-discovery.js';
 import { classifyPriceTier, type PriceTier } from './cost-tier.js';
 import { idLooksLikeJunk, recomputeCapabilityTiers } from './capability-tier.js';
+import { ensureDefaultRoutingTiers } from './tier-routing.js';
 import { ensureModelInProfiles } from './profile-models.js';
 
 // ── Operator-triggered catalog refresh ──────────────────────────────────────
@@ -47,13 +49,24 @@ export interface RefreshPlatformResult {
   paidNow: number;
 }
 
+/** A registered provider that could not be asked at all, and exactly why. */
+export interface RefreshSkippedPlatform {
+  platform: string;
+  reason: string;
+}
+
 export interface RefreshReport {
   startedAt: string;
   finishedAt: string;
   platforms: RefreshPlatformResult[];
+  /** Every other registered provider, so "refresh all" is auditable. */
+  skipped: RefreshSkippedPlatform[];
   totals: {
+    /** Providers registered in this build (queried + skipped). */
+    providersRegistered: number;
     platformsQueried: number;
     platformsFailed: number;
+    platformsSkipped: number;
     added: number;
     missing: number;
     retiered: number;
@@ -180,10 +193,17 @@ function mergePlatform(
 }
 
 export interface RefreshOptions {
-  /** Limit the refresh to these platforms. Omit for every configured one. */
+  /**
+   * Limit the refresh to these platforms. Omit for **every** registered
+   * provider, not just the ones holding a key: keyless OpenAI-compatible
+   * adapters are queried anonymously, and providers that cannot be asked are
+   * reported in `skipped` with a reason instead of silently vanishing.
+   */
   platforms?: string[];
   /** Recompute capability tiers after the merge (default true). */
   recomputeTiers?: boolean;
+  /** Exclude keyless anonymous providers (default false). */
+  skipKeyless?: boolean;
 }
 
 /**
@@ -200,46 +220,68 @@ export async function refreshProviderModels(
 ): Promise<RefreshReport> {
   const startedAt = new Date().toISOString();
 
-  const configured = db.prepare(`
-    SELECT DISTINCT platform FROM api_keys
-     WHERE enabled = 1 AND status != 'invalid'
-     ORDER BY platform
-  `).all() as { platform: string }[];
-
-  const wanted = options.platforms?.length
-    ? configured.filter(p => options.platforms!.includes(p.platform))
-    : configured;
+  // Enumerate *every* registered provider so the button really means "all".
+  // The old implementation started from api_keys, which meant a provider the
+  // operator had not added a key for was invisible in the report entirely.
+  const registered: string[] = getAllProviders()
+    .map(p => p.platform as string)
+    .filter((p, i, arr) => arr.indexOf(p) === i)
+    .sort();
+  const filter = options.platforms?.length ? new Set(options.platforms) : null;
+  const wanted = filter ? registered.filter(p => filter.has(p)) : registered;
 
   const platforms: RefreshPlatformResult[] = [];
+  const skipped: RefreshSkippedPlatform[] = [];
   let tiersTouched = false;
 
-  for (const { platform } of wanted) {
-    const keys = usableKeys(db, platform);
-    if (keys.length === 0) {
-      platforms.push({
-        platform, ok: false, reason: 'no usable key',
-        added: 0, addedDisabled: 0, missing: 0, retiered: 0, upstreamCount: 0, paidNow: 0,
-      });
+  // A keyless adapter sends no Authorization header at all, so it only needs
+  // a syntactically valid (empty) credential row for the discovery helper.
+  let anonymousKey: KeyRow | null = null;
+  const keylessKey = (): KeyRow => {
+    if (!anonymousKey) {
+      const blank = encrypt('');
+      anonymousKey = {
+        id: -1, platform: '', encrypted_key: blank.encrypted,
+        iv: blank.iv, auth_tag: blank.authTag,
+      };
+    }
+    return anonymousKey;
+  };
+
+  for (const platform of wanted) {
+    if (platform === 'custom') {
+      skipped.push({ platform, reason: 'custom endpoints are synced separately' });
       continue;
     }
-
     // Only OpenAI-compatible adapters expose /models. Google, Cohere, the media
     // adapters and the search/decision integrations all fall outside this and
     // are reported as skipped rather than guessed at.
     const provider = getProvider(platform as Platform);
-    if (!(provider instanceof OpenAICompatProvider)) {
-      platforms.push({
-        platform, ok: false, reason: 'adapter has no /models endpoint',
-        added: 0, addedDisabled: 0, missing: 0, retiered: 0, upstreamCount: 0, paidNow: 0,
+    const compat = provider instanceof OpenAICompatProvider ? provider : null;
+    const keys = compat ? usableKeys(db, platform) : [];
+    const usable: KeyRow[] = keys.length
+      ? keys
+      : compat?.keyless && !options.skipKeyless ? [keylessKey()] : [];
+
+    if (!compat || usable.length === 0) {
+      skipped.push({
+        platform,
+        reason: !compat
+          ? 'no /models endpoint (catalog-managed)'
+          : platform === 'custom'
+            ? 'custom endpoints are synced separately'
+            : compat.keyless && options.skipKeyless
+              ? 'keyless provider excluded'
+              : 'no usable key (add one to enable discovery)',
       });
       continue;
     }
 
     let lastError: string | undefined;
     let merged: Omit<RefreshPlatformResult, 'platform' | 'ok'> | null = null;
-    for (const key of keys) {
+    for (const key of usable) {
       try {
-        const upstream = await discoverBuiltinModels(provider, key);
+        const upstream = await discoverBuiltinModels(compat, key);
         merged = mergePlatform(db, platform, upstream);
         break;
       } catch (err) {
@@ -260,7 +302,12 @@ export async function refreshProviderModels(
   }
 
   const recompute = options.recomputeTiers !== false && tiersTouched;
-  if (recompute) recomputeCapabilityTiers(db);
+  if (recompute) {
+    recomputeCapabilityTiers(db);
+    // Newly discovered rows default to "other"; fold them into the three
+    // operator strings so a refresh does not leave tier 1 stale.
+    ensureDefaultRoutingTiers(db);
+  }
 
   const sum = (pick: (r: RefreshPlatformResult) => number) => platforms.reduce((acc, r) => acc + pick(r), 0);
 
@@ -268,9 +315,12 @@ export async function refreshProviderModels(
     startedAt,
     finishedAt: new Date().toISOString(),
     platforms,
+    skipped,
     totals: {
+      providersRegistered: wanted.length,
       platformsQueried: platforms.length,
       platformsFailed: platforms.filter(p => !p.ok).length,
+      platformsSkipped: skipped.length,
       added: sum(r => r.added),
       missing: sum(r => r.missing),
       retiered: sum(r => r.retiered),

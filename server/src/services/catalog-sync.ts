@@ -18,6 +18,8 @@ import {
 } from './model-state.js';
 import { ensureAllModelsInProfiles } from './profile-models.js';
 import { reclassifyCatalogModelTiers } from './cost-tier.js';
+import { recomputeCapabilityTiers } from './capability-tier.js';
+import { ensureDefaultRoutingTiers } from './tier-routing.js';
 
 // Generative-media modalities are routed into the separate media_models table
 // (see services/media.ts), never into the chat `models` table.
@@ -1110,6 +1112,17 @@ function applyCatalogInner(db: Db, catalog: Catalog): NonNullable<SyncResult['co
     );
   } catch (err) {
     console.warn(`[catalog-sync] price-tier reclassification failed: ${err instanceof Error ? err.message : err}`);
+  }
+
+  // Fork: the catalog just changed the ranks that ability tiers come from, so
+  // re-derive them and re-seed the three routing strings. Newly arrived rows
+  // otherwise land in "other" forever and tier 1 slowly empties out as the
+  // catalog churns. Manual placements are preserved by ensureDefaultRoutingTiers.
+  try {
+    recomputeCapabilityTiers(db);
+    ensureDefaultRoutingTiers(db);
+  } catch (err) {
+    console.warn(`[catalog-sync] routing-tier refresh failed: ${err instanceof Error ? err.message : err}`);
   }
 
   return counts;

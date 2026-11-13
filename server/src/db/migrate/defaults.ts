@@ -51,6 +51,7 @@ import * as cloudflareNeuronUsage from '../migrations/20261104_000001_cloudflare
 import * as modelMonthlyUsage from '../migrations/20261111_000001_model_monthly_usage.js';
 import * as profileRoutingStrategy from '../migrations/20261111_000002_profile_routing_strategy.js';
 import * as modelCostTier from '../migrations/20261001_000001_model_cost_tier.js';
+import * as modelRoutingTier from '../migrations/20261002_000001_model_routing_tier.js';
 
 export interface MigrationModule {
   up(db: Db): void;
@@ -113,6 +114,7 @@ export const CLOUDFLARE_NEURON_USAGE_FILENAME = '20261104_000001_cloudflare_neur
 export const MODEL_MONTHLY_USAGE_FILENAME = '20261111_000001_model_monthly_usage.ts';
 export const PROFILE_ROUTING_STRATEGY_FILENAME = '20261111_000002_profile_routing_strategy.ts';
 export const MODEL_COST_TIER_FILENAME = '20261001_000001_model_cost_tier.ts';
+export const MODEL_ROUTING_TIER_FILENAME = '20261002_000001_model_routing_tier.ts';
 
 export const DEFAULT_MIGRATIONS: readonly DefaultMigration[] = [
   { filename: LEGACY_BASELINE_FILENAME, module: legacyBaseline },
@@ -159,6 +161,7 @@ export const DEFAULT_MIGRATIONS: readonly DefaultMigration[] = [
   // snapshots `SELECT * FROM models` into settings must see the same columns on
   // every replay (see the round-trip regression test).
   { filename: MODEL_COST_TIER_FILENAME, module: modelCostTier },
+  { filename: MODEL_ROUTING_TIER_FILENAME, module: modelRoutingTier },
   { filename: MODEL_PROBE_STATUS_FILENAME, module: modelProbeStatus },
   { filename: SEARCH_ENGINES_FILENAME, module: searchEngines },
   { filename: DECISION_REQUESTS_FILENAME, module: decisionRequests },

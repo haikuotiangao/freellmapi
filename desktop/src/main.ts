@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, dialog, ipcMain, clipboard, nativeTheme, net, screen, shell, type Tray } from 'electron';
-import { startServer, ensureSessionToken, getUnifiedApiKey, isAutoUpdateCheckEnabled, backupBeforeUpdate, outboundProxyUrl, setCatalogFallbackFetch } from './server.mjs';
+import { startServer, ensureSessionToken, getUnifiedApiKey, backupBeforeUpdate, outboundProxyUrl, setCatalogFallbackFetch } from './server.mjs';
 import { loadConfig, saveConfig } from './config.js';
 import { installFileLogger } from './logger.js';
 import { buildTray, refreshTrayLocale } from './tray.js';
@@ -10,7 +10,7 @@ import { shouldOpenDashboardOnLaunch } from './tray-platform.js';
 import { openDashboard } from './window.js';
 import { todayStats, hourlyRequests, successRateToday } from './stats.js';
 import { normalizeLocale, nativeStrings, type NativeLocale } from './i18n.js';
-import { initUpdater, getUpdateState, checkForUpdates, downloadUpdate, installUpdate, checkFromTray } from './updater.js';
+import { initUpdater, getUpdateState, checkForUpdates, downloadUpdate, installUpdate } from './updater.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = 31415;
@@ -278,9 +278,12 @@ if (!app.requestSingleInstanceLock()) {
     process.env.FREEAPI_VERSION = app.getVersion();
 
     initUpdater({
-      autoCheckEnabled: () => {
-        try { return isAutoUpdateCheckEnabled(); } catch { return false; }
-      },
+      // Fork-only: this is a locally-built, free-quota-only install. There is
+      // no hosted update feed to check and the operator asked for no update /
+      // upgrade surface, so background checks are permanently off. The IPC
+      // handlers stay registered for compatibility with the preload bridge,
+      // but nothing in the renderer invokes them anymore.
+      autoCheckEnabled: () => false,
       backupBeforeUpdate,
       outboundProxyUrl: () => {
         try { return outboundProxyUrl(); } catch { return ''; }
@@ -315,8 +318,6 @@ if (!app.requestSingleInstanceLock()) {
           toggleLanAccess,
           () => loadConfig().showInDock ?? true,
           toggleShowInDock,
-          getUpdateState,
-          () => void checkFromTray(),
         );
       } catch (err) {
         console.warn('[desktop] could not create the tray icon:', err);

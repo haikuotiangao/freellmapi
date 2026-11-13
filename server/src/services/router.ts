@@ -45,6 +45,7 @@ import { isToolBenched } from '../lib/tool-capability.js';
 import { parseModelScope, scopeAllows } from '../lib/model-scope.js';
 import { getKeyQuotaHeadroom, inferQuotaPoolKey } from './provider-quota.js';
 import { isFreeOnlyRoutingEnabled } from './cost-tier.js';
+import { buildTierWalkOrder } from './tier-routing.js';
 import type { BaseProvider } from '../providers/base.js';
 import type { Platform } from '@freellmapi/shared/types.js';
 import type { Db } from '../db/types.js';
@@ -190,6 +191,13 @@ export interface ChainRow {
    * frontier one just because it happens to sit higher in the list.
    */
   capability_tier?: number | null;
+  /**
+   * Operator-owned routing string (services/tier-routing.ts): 1 = 第一梯队,
+   * 2 = 第二梯队, 3 = 其他 (the default). Drives the walk order in
+   * routeRequest when tier routing is on; the strategy score still orders
+   * models WITHIN a tier.
+   */
+  routing_tier?: number | null;
   /**
    * Ordering TIER, ahead of score. 0 (the default, and what every other chain
    * builder produces) is a normal candidate. A higher number is a fallback that
@@ -1379,7 +1387,7 @@ function getActiveChain(db: Db): ChainRow[] {
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
              m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.price_tier, m.capability_tier,
+           m.price_tier, m.capability_tier, m.routing_tier,
              m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
       FROM profile_models pm
       JOIN models m ON m.id = pm.model_db_id AND m.enabled = 1
@@ -1394,7 +1402,7 @@ function getActiveChain(db: Db): ChainRow[] {
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
              m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-             m.price_tier, m.capability_tier,
+             m.price_tier, m.capability_tier, m.routing_tier,
              m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
       FROM fallback_config fc
       JOIN models m ON m.id = fc.model_db_id AND m.enabled = 1
@@ -1415,7 +1423,7 @@ function getChainByProfileName(db: Db, name: string): ChainRow[] | null {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.price_tier, m.capability_tier,
+           m.price_tier, m.capability_tier, m.routing_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM profile_models pm
     JOIN models m ON m.id = pm.model_db_id AND m.enabled = 1
@@ -1439,7 +1447,7 @@ function getChainByGlobalSort(db: Db, globalAxis: string): ChainRow[] {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.price_tier, m.capability_tier,
+           m.price_tier, m.capability_tier, m.routing_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM models m
     LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
@@ -1905,7 +1913,7 @@ function getModelChainRow(db: Db, modelDbId: number): ChainRow | undefined {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.price_tier, m.capability_tier,
+           m.price_tier, m.capability_tier, m.routing_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM models m
     WHERE m.id = ? AND m.enabled = 1
@@ -2031,7 +2039,7 @@ export function resolveModelGroupCandidates(
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
              m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.price_tier, m.capability_tier,
+           m.price_tier, m.capability_tier, m.routing_tier,
              m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
       FROM models m
       LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
@@ -2043,7 +2051,7 @@ export function resolveModelGroupCandidates(
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
              m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.price_tier, m.capability_tier,
+           m.price_tier, m.capability_tier, m.routing_tier,
              m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
       FROM models m
       LEFT JOIN profile_models pm ON pm.profile_id = ? AND pm.model_db_id = m.id
@@ -2338,7 +2346,7 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
                m.platform, m.model_id, m.display_name, m.intelligence_rank,
                m.size_label, m.monthly_token_budget,
                m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.price_tier, m.capability_tier,
+           m.price_tier, m.capability_tier, m.routing_tier,
                m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
         FROM models m
         WHERE m.id = ? AND m.enabled = 1
@@ -2415,7 +2423,18 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
   }
   servingChain.push(...marginDeferred, ...toolDeferred);
 
-  for (const entry of servingChain) {
+  // ── Fork: operator routing tiers ──────────────────────────────────────────
+  // The operator's strings (第一梯队/第二梯队/其他) sit ABOVE the strategy
+  // score: tier 1 is walked TIER1_ROUNDS times before tier 2 is consulted,
+  // tier 3 last, and within each tier the strategy's order stands. A revisit
+  // in a later pass is cheap: skipModels/skipPlatforms already hold everything
+  // the earlier pass ruled out, so only models that are still viable re-enter
+  // key selection (that is the point — a 429 from pass 1 may have cleared by
+  // pass 2, while a hard failure has not).
+  const tierPlan = buildTierWalkOrder(servingChain);
+  const walkChain = tierPlan.ordered;
+
+  for (const entry of walkChain) {
     const label = `${entry.platform}/${entry.model_id}`;
     // Models the caller has ruled out for this request — e.g. a 404
     // "model removed upstream" already seen this request: trying the same
@@ -2532,7 +2551,7 @@ export function getRoutingScores(): { strategy: RoutingStrategy; keySelectionStr
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
-           m.price_tier, m.capability_tier,
+           m.price_tier, m.capability_tier, m.routing_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM models m
     LEFT JOIN ${profileId != null

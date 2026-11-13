@@ -53,6 +53,7 @@
     "refreshing": "刷新中…",
     "refreshSummary": "查询 {q} 家，失败 {f} 家，新增 {a} 个，下线 {m} 个，新转收费 {p} 个。",
     "paidNow": "新转收费",
+    "refreshDone": "新增 {n} 个模型",
     "done": "已完成"
   },
   "auth": {

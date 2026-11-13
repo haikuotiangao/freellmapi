@@ -50,7 +50,7 @@ import * as customMediaEndpointIdentity from '../migrations/20261028_000001_cust
 import * as cloudflareNeuronUsage from '../migrations/20261104_000001_cloudflare_neuron_usage.js';
 import * as modelMonthlyUsage from '../migrations/20261111_000001_model_monthly_usage.js';
 import * as profileRoutingStrategy from '../migrations/20261111_000002_profile_routing_strategy.js';
-import * as modelCostTier from '../migrations/20261113_000001_model_cost_tier.js';
+import * as modelCostTier from '../migrations/20261001_000001_model_cost_tier.js';
 
 export interface MigrationModule {
   up(db: Db): void;
@@ -112,7 +112,7 @@ export const KEY_LAST_HEALTHY_AT_FILENAME = '20261020_000001_key_last_healthy_at
 export const CLOUDFLARE_NEURON_USAGE_FILENAME = '20261104_000001_cloudflare_neuron_usage.ts';
 export const MODEL_MONTHLY_USAGE_FILENAME = '20261111_000001_model_monthly_usage.ts';
 export const PROFILE_ROUTING_STRATEGY_FILENAME = '20261111_000002_profile_routing_strategy.ts';
-export const MODEL_COST_TIER_FILENAME = '20261113_000001_model_cost_tier.ts';
+export const MODEL_COST_TIER_FILENAME = '20261001_000001_model_cost_tier.ts';
 
 export const DEFAULT_MIGRATIONS: readonly DefaultMigration[] = [
   { filename: LEGACY_BASELINE_FILENAME, module: legacyBaseline },
@@ -153,18 +153,22 @@ export const DEFAULT_MIGRATIONS: readonly DefaultMigration[] = [
   { filename: REQUEST_MODEL_ATTRIBUTION_FILENAME, module: requestModelAttribution },
   { filename: KEY_MONTHLY_USAGE_FILENAME, module: keyMonthlyUsage },
   { filename: QUOTA_SNAPSHOT_FRESHNESS_FILENAME, module: quotaSnapshotFreshness },
-{ filename: CUSTOM_ENDPOINT_GROUP_LABEL_FILENAME, module: customEndpointGroupLabel },
-{ filename: MODEL_PROBE_STATUS_FILENAME, module: modelProbeStatus },
-{ filename: SEARCH_ENGINES_FILENAME, module: searchEngines },
-{ filename: DECISION_REQUESTS_FILENAME, module: decisionRequests },
-{ filename: LLMTR_REENABLE_KEYS_FILENAME, module: llmtrReenableKeys },
-{ filename: REMOVE_GITHUB_PROVIDER_FILENAME, module: removeGithubProvider },
-{ filename: REQUEST_FAILURE_ATTRIBUTION_FILENAME, module: requestFailureAttribution },
-{ filename: REMOVE_AURAY_PROVIDER_FILENAME, module: removeAurayProvider },
-{ filename: KEY_LAST_HEALTHY_AT_FILENAME, module: keyLastHealthyAt },
-{ filename: '20261028_000001_custom_media_endpoint_identity.ts', module: customMediaEndpointIdentity },
-{ filename: CLOUDFLARE_NEURON_USAGE_FILENAME, module: cloudflareNeuronUsage },
-{ filename: MODEL_MONTHLY_USAGE_FILENAME, module: modelMonthlyUsage },
-{ filename: PROFILE_ROUTING_STRATEGY_FILENAME, module: profileRoutingStrategy },
+  { filename: CUSTOM_ENDPOINT_GROUP_LABEL_FILENAME, module: customEndpointGroupLabel },
+  // Fork: dated between the group-label migration and the probe-status one
+  // because it only touches `models`, and any migration after this point that
+  // snapshots `SELECT * FROM models` into settings must see the same columns on
+  // every replay (see the round-trip regression test).
   { filename: MODEL_COST_TIER_FILENAME, module: modelCostTier },
+  { filename: MODEL_PROBE_STATUS_FILENAME, module: modelProbeStatus },
+  { filename: SEARCH_ENGINES_FILENAME, module: searchEngines },
+  { filename: DECISION_REQUESTS_FILENAME, module: decisionRequests },
+  { filename: LLMTR_REENABLE_KEYS_FILENAME, module: llmtrReenableKeys },
+  { filename: REMOVE_GITHUB_PROVIDER_FILENAME, module: removeGithubProvider },
+  { filename: REQUEST_FAILURE_ATTRIBUTION_FILENAME, module: requestFailureAttribution },
+  { filename: REMOVE_AURAY_PROVIDER_FILENAME, module: removeAurayProvider },
+  { filename: KEY_LAST_HEALTHY_AT_FILENAME, module: keyLastHealthyAt },
+  { filename: '20261028_000001_custom_media_endpoint_identity.ts', module: customMediaEndpointIdentity },
+  { filename: CLOUDFLARE_NEURON_USAGE_FILENAME, module: cloudflareNeuronUsage },
+  { filename: MODEL_MONTHLY_USAGE_FILENAME, module: modelMonthlyUsage },
+  { filename: PROFILE_ROUTING_STRATEGY_FILENAME, module: profileRoutingStrategy },
 ];

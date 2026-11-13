@@ -16,7 +16,8 @@
     "modelsMenu": "Przeglądaj typy modeli",
     "agents": "Agenci",
     "logs": "Logi",
-    "analyticsMenu": "Strony analityki"
+    "analyticsMenu": "Strony analityki",
+    "tuning": "Tuning"
   },
   "auth": {
     "createYourAccount": "Utwórz swoje konto",
@@ -1349,5 +1350,42 @@
     "tryConfidence": "Pewność: {value}%",
     "tryServedBy": "{model} · {latency} ms",
     "exampleTitle": "Przykładowe żądanie"
+  },
+  "tuning": {
+    "title": "Tuning",
+    "description": "Fork-only controls: keep paid models out of the pool, bulk-disable junk, re-sort the chain by ability, and tune each provider's rate limits.",
+    "freeOnlyTitle": "Free models only",
+    "freeOnlyDescription": "Models classified as paid are skipped by the router entirely — no strategy, tie-breaker or penalty can put them back. Models with no known price (most providers publish none) still route.",
+    "freeOnlySwitch": "Skip paid models when routing",
+    "freeOnlyOn": "Free-only routing is on",
+    "freeOnlyOff": "Free-only routing is off",
+    "countEnabled": "Enabled",
+    "tierFree": "free",
+    "tierPaid": "paid",
+    "tierUnknown": "unpriced",
+    "disablePaid": "Disable paid models",
+    "enableFree": "Re-enable free models",
+    "capabilityTitle": "Capability tiers",
+    "capabilityDescription": "Every catalog model gets a coarse ability tier (frontier / strong / supplemental / junk) from its catalog rank and id family. Junk is only ever a suggestion until you act on it.",
+    "recompute": "Recompute tiers",
+    "confirm": "Confirm",
+    "disableJunk": "Disable junk",
+    "resort": "Re-sort chain by ability",
+    "resortHint": "Re-sorting rewrites the manual chain order (priority) to best-ability-first. It does not enable, disable or delete anything.",
+    "limitsTitle": "Provider rate limits",
+    "limitsDescription": "Per-account limits used before a request is sent. A profile scoped to 'model' means each model id gets its own bucket; 'account' means they all share one. Blank means unset.",
+    "limitsEmpty": "No provider profiles yet.",
+    "platform": "Provider",
+    "concurrency": "Concurrency",
+    "scope": "Scope",
+    "save": "Save",
+    "refreshTitle": "Refresh from providers",
+    "refreshDescription": "Asks every configured provider's own /models what it serves right now, adds what is new (paid and junk rows arrive disabled), and re-derives capability tiers. Nothing is ever deleted.",
+    "refreshNow": "Refresh now",
+    "refreshing": "Refreshing…",
+    "refreshSummary": "{q} providers queried, {f} failed, {a} added, {m} no longer listed, {p} newly paid.",
+    "paidNow": "newly paid",
+    "refreshDone": "Added {n} model(s)",
+    "done": "Done"
   }
 }

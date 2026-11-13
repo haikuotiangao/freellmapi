@@ -53,6 +53,7 @@
     "refreshing": "Refreshing…",
     "refreshSummary": "{q} providers queried, {f} failed, {a} added, {m} no longer listed, {p} newly paid.",
     "paidNow": "newly paid",
+    "refreshDone": "Added {n} model(s)",
     "done": "Done"
   },
   "auth": {

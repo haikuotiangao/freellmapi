@@ -1,26 +1,31 @@
 import type { Db } from '../db/types.js';
 import { getDb } from '../db/index.js';
-import { decrypt } from '../lib/crypto.js';
 import { getProvider } from '../providers/index.js';
+import { OpenAICompatProvider } from '../providers/openai-compat.js';
 import type { Platform } from '@freellmapi/shared/types.js';
-import { discoverEndpointModels, type DiscoveredModel } from './model-discovery.js';
+import { discoverBuiltinModels } from './builtin-model-discovery.js';
+import type { DiscoveredModel } from './model-discovery.js';
 import { classifyPriceTier, type PriceTier } from './cost-tier.js';
 import { idLooksLikeJunk, recomputeCapabilityTiers } from './capability-tier.js';
+import { ensureModelInProfiles } from './profile-models.js';
 
 // ── Operator-triggered catalog refresh ──────────────────────────────────────
 //
-// The signed catalog only carries models the *catalog authors* chose to list.
-// A relay that added a model yesterday, or one that quietly moved a `:free`
-// model onto a paid plan, is invisible until someone regenerates that catalog —
-// which the fork cannot do. But every OpenAI-compatible provider answers
-// `GET <base>/models` with exactly what the key can reach right now, so the
-// operator can refresh from the horse's mouth.
+// The signed catalog only carries models its authors chose to list. A relay that
+// added a model yesterday, or one that quietly moved a `:free` model onto a paid
+// plan, is invisible until that catalog is regenerated — which a free install
+// cannot do. Every OpenAI-compatible provider, however, answers `GET /models`
+// with exactly what the key can reach right now.
+//
+// Upstream already has that plumbing (#1348: builtin-model-discovery, and the
+// proxy handling in discoverBuiltinModels), but only for an allowlist of
+// platforms and only on a schedule. This exposes it as one button over every
+// configured platform, and adds the two things the fork cares about: price
+// verdicts on what comes back, and the ability tier it lands in.
 //
 // What this deliberately does NOT do: delete rows. A model missing from the
-// upstream listing is reported, not removed — a provider whose `/models` is
-// paginated or transiently broken would otherwise wipe the chain. Missing rows
-// keep their enabled flag and simply stop being routable once `enabled` is
-// turned off by the operator (or by the junk pass).
+// upstream listing is reported, not removed — a provider whose /models is
+// paginated or transiently broken would otherwise wipe the chain.
 
 export interface RefreshPlatformResult {
   platform: string;
@@ -60,10 +65,13 @@ export interface RefreshReport {
 
 interface KeyRow {
   id: number;
+  platform: string;
   encrypted_key: string;
   iv: string;
   auth_tag: string;
-  base_url: string | null;
+  proxy_encrypted?: string | null;
+  proxy_iv?: string | null;
+  proxy_auth_tag?: string | null;
 }
 
 interface ExistingRow {
@@ -72,32 +80,14 @@ interface ExistingRow {
   price_tier: string;
 }
 
-/** First usable credential for a platform, decrypted. null when none works. */
-function firstCredential(db: Db, platform: string): { key: string; baseUrl: string | null } | null {
-  const rows = db.prepare(`
-    SELECT id, encrypted_key, iv, auth_tag, base_url FROM api_keys
-     WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')
-     ORDER BY id ASC LIMIT 5
+/** Same ordering the built-in discovery uses: healthy keys first, never invalid. */
+function usableKeys(db: Db, platform: string): KeyRow[] {
+  return db.prepare(`
+    SELECT id, platform, encrypted_key, iv, auth_tag, proxy_encrypted, proxy_iv, proxy_auth_tag
+      FROM api_keys
+     WHERE platform = ? AND enabled = 1 AND status != 'invalid'
+     ORDER BY CASE status WHEN 'healthy' THEN 0 ELSE 1 END, id
   `).all(platform) as KeyRow[];
-  for (const row of rows) {
-    try {
-      return {
-        key: decrypt(row.encrypted_key, row.iv, row.auth_tag),
-        baseUrl: row.base_url?.trim().replace(/\/+$/, '') || null,
-      };
-    } catch {
-      // Undecryptable row (rotated key, corrupted blob): try the next one.
-      continue;
-    }
-  }
-  return null;
-}
-
-/** The `<base>/models` URL to probe for a platform, or null when it has none. */
-function resolveCatalogBaseUrl(platform: string, credentialBaseUrl: string | null): string | null {
-  if (credentialBaseUrl) return credentialBaseUrl;
-  const provider = getProvider(platform as Platform);
-  return provider?.catalogBaseUrl ?? null;
 }
 
 /**
@@ -112,19 +102,23 @@ function mergePlatform(
   platform: string,
   upstream: DiscoveredModel[],
 ): Omit<RefreshPlatformResult, 'platform' | 'ok'> {
-  const existing = db.prepare('SELECT id, model_id, price_tier FROM models WHERE platform = ?')
+  const existing = db.prepare('SELECT id, model_id, price_tier FROM models WHERE platform = ? AND endpoint_scope = \'\'')
     .all(platform) as ExistingRow[];
   const byId = new Map(existing.map(r => [r.model_id, r]));
 
   const insert = db.prepare(`
-    INSERT INTO models (platform, model_id, display_name, intelligence_rank, speed_rank, size_label,
-                        rpm_limit, rpd_limit, tpm_limit, tpd_limit, monthly_token_budget, context_window,
-                        enabled, supports_vision, supports_tools, source, price_tier, price_note)
-    VALUES (@platform, @modelId, @displayName, 9999, 9999, 'Unknown',
-            NULL, NULL, NULL, NULL, '', @contextWindow,
-            @enabled, @supportsVision, 0, 'catalog', @priceTier, @priceNote)
-    ON CONFLICT(platform, model_id) DO NOTHING
+    INSERT INTO models
+      (platform, model_id, display_name, intelligence_rank, speed_rank, size_label,
+       rpm_limit, rpd_limit, tpm_limit, tpd_limit, monthly_token_budget, context_window,
+       enabled, key_id, supports_tools, supports_vision, source, endpoint_scope,
+       price_tier, price_note, capability_tier)
+    VALUES (@platform, @modelId, @modelId, 9999, 9999, 'Unknown',
+       NULL, NULL, NULL, NULL, '', @contextWindow,
+       @enabled, NULL, 0, @supportsVision, 'discovered', '',
+       @priceTier, @priceNote, @capabilityTier)
+    ON CONFLICT(platform, model_id, endpoint_scope) DO NOTHING
   `);
+  const selectId = db.prepare("SELECT id FROM models WHERE platform = ? AND model_id = ? AND endpoint_scope = ''");
   const retier = db.prepare('UPDATE models SET price_tier = ?, price_note = ? WHERE id = ?');
 
   let added = 0;
@@ -135,8 +129,8 @@ function mergePlatform(
 
   db.transaction(() => {
     for (const model of upstream) {
-      // `kind` is only ever set when the upstream model is discernibly NOT a
-      // chat model, so its presence means "don't put this in the router's pool".
+      // `kind` is only set when the upstream model is discernibly NOT a chat
+      // model, so its presence means "don't put this in the router's pool".
       if (model.kind) continue;
       seen.add(model.id);
 
@@ -161,17 +155,22 @@ function mergePlatform(
       const info = insert.run({
         platform,
         modelId: model.id,
-        displayName: model.id,
         contextWindow: model.contextWindow ?? null,
         enabled,
         supportsVision: model.vision ? 1 : 0,
         priceTier: tier,
         priceNote: note,
+        capabilityTier: junk ? 4 : 0,
       });
       if (info.changes > 0) {
         added++;
         if (enabled === 0) addedDisabled++;
         if (tier === 'paid') paidNow++;
+        // A model that is in no profile can never be routed, so a refresh that
+        // only inserts rows would look like it did nothing on the dashboard.
+        // Enable-flagged rows get a profile entry; the disabled ones wait.
+        const row = selectId.get(platform, model.id) as { id: number } | undefined;
+        if (row && enabled === 1) ensureModelInProfiles(db, row.id);
       }
     }
   })();
@@ -203,7 +202,7 @@ export async function refreshProviderModels(
 
   const configured = db.prepare(`
     SELECT DISTINCT platform FROM api_keys
-     WHERE enabled = 1 AND status IN ('healthy', 'unknown')
+     WHERE enabled = 1 AND status != 'invalid'
      ORDER BY platform
   `).all() as { platform: string }[];
 
@@ -215,8 +214,8 @@ export async function refreshProviderModels(
   let tiersTouched = false;
 
   for (const { platform } of wanted) {
-    const credential = firstCredential(db, platform);
-    if (!credential) {
+    const keys = usableKeys(db, platform);
+    if (keys.length === 0) {
       platforms.push({
         platform, ok: false, reason: 'no usable key',
         added: 0, addedDisabled: 0, missing: 0, retiered: 0, upstreamCount: 0, paidNow: 0,
@@ -224,27 +223,40 @@ export async function refreshProviderModels(
       continue;
     }
 
-    const baseUrl = resolveCatalogBaseUrl(platform, credential.baseUrl);
-    if (!baseUrl) {
+    // Only OpenAI-compatible adapters expose /models. Google, Cohere, the media
+    // adapters and the search/decision integrations all fall outside this and
+    // are reported as skipped rather than guessed at.
+    const provider = getProvider(platform as Platform);
+    if (!(provider instanceof OpenAICompatProvider)) {
       platforms.push({
-        platform, ok: false, reason: 'provider exposes no /models endpoint',
+        platform, ok: false, reason: 'adapter has no /models endpoint',
         added: 0, addedDisabled: 0, missing: 0, retiered: 0, upstreamCount: 0, paidNow: 0,
       });
       continue;
     }
 
-    try {
-      const upstream = await discoverEndpointModels(baseUrl, credential.key);
-      const merged = mergePlatform(db, platform, upstream);
-      platforms.push({ platform, ok: true, ...merged });
-      tiersTouched = tiersTouched || merged.added > 0;
-    } catch (err) {
+    let lastError: string | undefined;
+    let merged: Omit<RefreshPlatformResult, 'platform' | 'ok'> | null = null;
+    for (const key of keys) {
+      try {
+        const upstream = await discoverBuiltinModels(provider, key);
+        merged = mergePlatform(db, platform, upstream);
+        break;
+      } catch (err) {
+        // Try the next key: one expired credential should not fail the platform.
+        lastError = (err as Error)?.message ?? 'refresh failed';
+      }
+    }
+
+    if (!merged) {
       platforms.push({
-        platform, ok: false,
-        reason: (err as Error)?.message ?? 'refresh failed',
+        platform, ok: false, reason: lastError ?? 'refresh failed',
         added: 0, addedDisabled: 0, missing: 0, retiered: 0, upstreamCount: 0, paidNow: 0,
       });
+      continue;
     }
+    platforms.push({ platform, ok: true, ...merged });
+    tiersTouched = tiersTouched || merged.added > 0;
   }
 
   const recompute = options.recomputeTiers !== false && tiersTouched;

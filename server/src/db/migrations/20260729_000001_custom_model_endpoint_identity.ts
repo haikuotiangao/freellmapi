@@ -88,21 +88,27 @@ function childTablesOfModels(db: Db): string[] {
  * column (type, nullability, default). `exclude` names the columns this
  * migration is deliberately removing, which must not come back on `down()`.
  */
-function unnamedExtraColumns(db: Db, exclude: string[]): string[] {
+function unnamedExtraColumns(db: Db, exclude: string[]): { names: string[]; ddl: string } {
   const carried = new Set(CARRIED_COLUMNS.split(',').map(c => c.trim()));
   const skip = new Set(exclude);
   const rows = db.prepare('PRAGMA table_info(models)').all() as {
     name: string; type: string; notnull: number; dflt_value: string | null; pk: number;
   }[];
-  const ddl: string[] = [];
+  const names: string[] = [];
+  const parts: string[] = [];
   for (const col of rows) {
     if (carried.has(col.name) || skip.has(col.name) || col.pk > 0) continue;
     const type = col.type || 'TEXT';
     const notNull = col.notnull === 1 ? ' NOT NULL' : '';
     const dflt = col.dflt_value !== null ? ` DEFAULT ${col.dflt_value}` : '';
-    ddl.push(`"${col.name}" ${type}${notNull}${dflt}`);
+    // Unquoted and space-separated exactly as SQLite's own ALTER TABLE ADD
+    // COLUMN leaves the stored CREATE text, so a rebuilt table is byte-identical
+    // to one the migrations built by adding columns one at a time.
+    const name = /^[A-Za-z_][A-Za-z0-9_]*$/.test(col.name) ? col.name : `"${col.name}"`;
+    names.push(name);
+    parts.push(`${name} ${type}${notNull}${dflt}`);
   }
-  return ddl;
+  return { names, ddl: parts.join(', ') };
 }
 
 function rebuildModels(
@@ -110,12 +116,13 @@ function rebuildModels(
   extraColumns: string,
   copiedColumns: string,
   unique: string,
-  /** Columns this call removes on purpose; never carried through. */
-  droppedColumns: string[] = [],
+  /** Columns this migration owns (added by `extraColumns` or removed by
+   *  `down()`); never carried through dynamically, in either direction. */
+  ownedColumns: string[] = [],
 ): void {
-  const extras = unnamedExtraColumns(db, droppedColumns);
-  const carriedList = copiedColumns + (extras.length > 0 ? `, ${extras.map(c => c.split(' ')[0]).join(', ')}` : '');
-  const extrasDdl = extras.length > 0 ? `,\n      ${extras.join(',\n      ')}` : '';
+  const extras = unnamedExtraColumns(db, ownedColumns);
+  const carriedList = copiedColumns + (extras.names.length > 0 ? `, ${extras.names.join(', ')}` : '');
+  const extrasDdl = extras.names.length > 0 ? `, ${extras.ddl}` : '';
   const children = childTablesOfModels(db);
   // AUTOINCREMENT's high-water mark. DROP TABLE takes the sqlite_sequence row
   // with it, and copying rows back only pushes the counter to the highest id
@@ -163,6 +170,9 @@ export function up(db: Db): void {
     `,\n      endpoint_scope TEXT NOT NULL DEFAULT ''`,
     CARRIED_COLUMNS,
     'UNIQUE(platform, model_id, endpoint_scope)',
+    // `endpoint_scope` is this migration's own column: on a replay it already
+    // exists, and carrying it dynamically would emit it twice.
+    ['endpoint_scope'],
   );
 
   // Backfill: a custom row's scope is the base_url of the key it is bound to.

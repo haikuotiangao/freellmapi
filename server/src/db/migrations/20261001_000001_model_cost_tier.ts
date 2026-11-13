@@ -9,13 +9,16 @@ import type { Db } from '../types.js';
  * silently turns a free model into a billed one. The upstream app has no way to
  * express that, so the local build adds it here.
  *
- *  - `price_tier`      'free' | 'paid' | 'unknown'. Default 'free' is the
- *                      conservative choice for the bundled catalog rows (the
- *                      whole product premise is free quota, and defaulting to
- *                      'paid' would disable every existing install on upgrade).
- *                      Sync / discovery only ever writes 'paid' on POSITIVE
- *                      evidence (a non-zero price component, an explicit
- *                      paid marker). 'unknown' is never auto-disabled.
+ *  - `price_tier`      'free' | 'paid' | 'unknown'. The column defaults to
+ *                      'unknown' rather than 'free': the bundled catalog carries
+ *                      NO price field at all (verified against v2026.11.12), so
+ *                      claiming 1,300 models are free would be a lie the
+ *                      dashboard repeats. 'unknown' is routable — filtering it
+ *                      would empty the catalog — and a real verdict is written
+ *                      only on positive evidence (a `:free` id, a zero pricing
+ *                      component, or an operator refresh).
+ *                      'paid' is never a default: it would disable every
+ *                      existing install on upgrade.
  *  - `capability_tier` 1 = frontier, 2 = strong, 3 = supplemental, 0 = unranked.
  *                      Used as the primary sort key under the manual strategy so
  *                      a caller's ordering can't put a 7B toy ahead of a
@@ -35,7 +38,7 @@ export function up(db: Db): void {
   // SQLite has no IF NOT EXISTS for ADD COLUMN, and this migration could be
   // re-run against a DB a partial write already touched.
   if (!has('price_tier')) {
-    db.exec("ALTER TABLE models ADD COLUMN price_tier TEXT NOT NULL DEFAULT 'free'");
+    db.exec("ALTER TABLE models ADD COLUMN price_tier TEXT NOT NULL DEFAULT 'unknown'");
   }
   if (!has('capability_tier')) {
     db.exec('ALTER TABLE models ADD COLUMN capability_tier INTEGER NOT NULL DEFAULT 0');

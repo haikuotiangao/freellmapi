@@ -54,7 +54,7 @@ const KEY_LAST_HEALTHY_AT_FILENAME = '20261020_000001_key_last_healthy_at.ts';
 const CLOUDFLARE_NEURON_USAGE_FILENAME = '20261104_000001_cloudflare_neuron_usage.ts';
 const MODEL_MONTHLY_USAGE_FILENAME = '20261111_000001_model_monthly_usage.ts';
 const PROFILE_ROUTING_STRATEGY_FILENAME = '20261111_000002_profile_routing_strategy.ts';
-const MODEL_COST_TIER_FILENAME = '20261113_000001_model_cost_tier.ts';
+const MODEL_COST_TIER_FILENAME = '20261001_000001_model_cost_tier.ts';
 
 interface SchemaRow {
   type: string;
@@ -144,6 +144,7 @@ describe('migration round trip', () => {
         KEY_MONTHLY_USAGE_FILENAME,
         QUOTA_SNAPSHOT_FRESHNESS_FILENAME,
         CUSTOM_ENDPOINT_GROUP_LABEL_FILENAME,
+        MODEL_COST_TIER_FILENAME,
         MODEL_PROBE_STATUS_FILENAME,
         SEARCH_ENGINES_FILENAME,
         DECISION_REQUESTS_FILENAME,
@@ -156,7 +157,6 @@ describe('migration round trip', () => {
         CLOUDFLARE_NEURON_USAGE_FILENAME,
         MODEL_MONTHLY_USAGE_FILENAME,
         PROFILE_ROUTING_STRATEGY_FILENAME,
-        MODEL_COST_TIER_FILENAME,
       ]);
     } finally {
       db.close();

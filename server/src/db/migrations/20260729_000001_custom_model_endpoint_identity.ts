@@ -74,7 +74,48 @@ function childTablesOfModels(db: Db): string[] {
     .map(t => t.name);
 }
 
-function rebuildModels(db: Db, extraColumns: string, copiedColumns: string, unique: string): void {
+/**
+ * Columns the CURRENT `models` table has that this migration does not name.
+ *
+ * The rebuild is written against the schema as it stood here, which is the
+ * right way to keep it auditable — but it means any column a LATER migration
+ * adds (this fork adds price_tier, capability_tier, price_note and
+ * limit_scope) is silently dropped if this `up()` ever runs again on an
+ * already-migrated database. That is exactly what the round-trip regression
+ * test does, and what a partially-applied upgrade would do in the field.
+ *
+ * So: carry whatever else is there, using SQLite's own description of the
+ * column (type, nullability, default). `exclude` names the columns this
+ * migration is deliberately removing, which must not come back on `down()`.
+ */
+function unnamedExtraColumns(db: Db, exclude: string[]): string[] {
+  const carried = new Set(CARRIED_COLUMNS.split(',').map(c => c.trim()));
+  const skip = new Set(exclude);
+  const rows = db.prepare('PRAGMA table_info(models)').all() as {
+    name: string; type: string; notnull: number; dflt_value: string | null; pk: number;
+  }[];
+  const ddl: string[] = [];
+  for (const col of rows) {
+    if (carried.has(col.name) || skip.has(col.name) || col.pk > 0) continue;
+    const type = col.type || 'TEXT';
+    const notNull = col.notnull === 1 ? ' NOT NULL' : '';
+    const dflt = col.dflt_value !== null ? ` DEFAULT ${col.dflt_value}` : '';
+    ddl.push(`"${col.name}" ${type}${notNull}${dflt}`);
+  }
+  return ddl;
+}
+
+function rebuildModels(
+  db: Db,
+  extraColumns: string,
+  copiedColumns: string,
+  unique: string,
+  /** Columns this call removes on purpose; never carried through. */
+  droppedColumns: string[] = [],
+): void {
+  const extras = unnamedExtraColumns(db, droppedColumns);
+  const carriedList = copiedColumns + (extras.length > 0 ? `, ${extras.map(c => c.split(' ')[0]).join(', ')}` : '');
+  const extrasDdl = extras.length > 0 ? `,\n      ${extras.join(',\n      ')}` : '';
   const children = childTablesOfModels(db);
   // AUTOINCREMENT's high-water mark. DROP TABLE takes the sqlite_sequence row
   // with it, and copying rows back only pushes the counter to the highest id
@@ -90,11 +131,11 @@ function rebuildModels(db: Db, extraColumns: string, copiedColumns: string, uniq
   }
 
   db.exec(`
-    CREATE TABLE models_endpoint_identity (${MODELS_COLUMNS}${extraColumns},
+    CREATE TABLE models_endpoint_identity (${MODELS_COLUMNS}${extraColumns}${extrasDdl},
       ${unique}
     );
-    INSERT INTO models_endpoint_identity (${copiedColumns})
-      SELECT ${copiedColumns} FROM models;
+    INSERT INTO models_endpoint_identity (${carriedList})
+      SELECT ${carriedList} FROM models;
     DROP TABLE models;
     ALTER TABLE models_endpoint_identity RENAME TO models;
   `);
@@ -161,5 +202,7 @@ export function down(db: Db): void {
   }
 
   db.exec('DROP INDEX IF EXISTS idx_models_endpoint_scope;');
-  rebuildModels(db, '', CARRIED_COLUMNS, 'UNIQUE(platform, model_id)');
+  // endpoint_scope is the column this migration owns; it must not survive the
+  // revert, so it is excluded from the dynamically carried extras above.
+  rebuildModels(db, '', CARRIED_COLUMNS, 'UNIQUE(platform, model_id)', ['endpoint_scope']);
 }

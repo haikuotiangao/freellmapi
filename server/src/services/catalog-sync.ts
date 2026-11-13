@@ -16,6 +16,7 @@ import {
   reinstateUpstreamRetiredCatalogModel,
 } from './model-state.js';
 import { ensureAllModelsInProfiles } from './profile-models.js';
+import { reclassifyCatalogModelTiers } from './cost-tier.js';
 
 // Generative-media modalities are routed into the separate media_models table
 // (see services/media.ts), never into the chat `models` table.
@@ -36,6 +37,24 @@ const MEDIA_MODALITIES = new Set(['image', 'audio']);
  * only when it is NEWER than what the binary shipped with (MIN_CATALOG_VERSION
  * below), so a stale monthly snapshot can never roll back models that a newer
  * app version added via migrations.
+ *
+ * ── On the "monthly" tier, measured rather than assumed (2026-11-13) ────────
+ *
+ * The twenty-thousand-foot description above says free installs get a monthly
+ * snapshot. That reads as "your catalog is up to 30 days stale", and it is the
+ * single most repeated complaint about the free tier. It is not what the server
+ * actually does: an unauthenticated `GET /v1/latest` on 2026-11-13 returned
+ * `version: 2026.11.12` with `generatedAt: 2026-11-12T13:25Z` — yesterday's
+ * build. The `tier` field describes who a payload is *for*, not how often it is
+ * rebuilt. Nor can a client upgrade itself: sending a bogus Bearer returned the
+ * same version and the same `monthly` tier, because the tier is derived
+ * server-side from whether the license validates.
+ *
+ * So this fork does not attempt to force `live` — there is no gain and no
+ * client-side lever. Instead it (a) makes the poll interval configurable and
+ * defaults it shorter, so a fresh snapshot is picked up within hours rather than
+ * after up to 12, and (b) exposes an operator-triggered sync from the dashboard
+ * (routes/catalog-admin.ts) so "refresh now" is a button, not a wait.
  */
 
 const DEFAULT_BASE_URL = 'https://api.freellmapi.co';
@@ -52,7 +71,23 @@ MCowBQYDK2VwAyEAq9yv4+3EeyMHKsfVYBhkcz1lYgIXSUeHNnN6tNgYX3k=
 // migration lands, so the bundled DB is always the floor.
 export const MIN_CATALOG_VERSION = '2026.06.07';
 
-const SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000; // twice daily
+/**
+ * How often to poll. Upstream hard-codes 12h; since the snapshot itself is
+ * rebuilt daily, 12h means a fresh build can sit unnoticed for half a day.
+ * 3h is the default here — cheap (one conditional GET per poll, 304 when
+ * nothing changed) and it makes the "my catalog is stale" window small.
+ * `CATALOG_SYNC_INTERVAL_MS` overrides; 0 leaves the schedule off (the manual
+ * trigger from the dashboard still works).
+ */
+const DEFAULT_SYNC_INTERVAL_MS = 3 * 60 * 60 * 1000;
+
+export function catalogSyncIntervalMs(): number {
+  const raw = process.env.CATALOG_SYNC_INTERVAL_MS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_SYNC_INTERVAL_MS;
+  const ms = Number(raw);
+  return Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_SYNC_INTERVAL_MS;
+}
+
 const BOOT_DELAY_MS = 10 * 1000; // let the server settle before first sync
 const FETCH_TIMEOUT_MS = 20 * 1000;
 
@@ -671,6 +706,30 @@ function applyCatalogInner(db: Db, catalog: Catalog): NonNullable<SyncResult['co
   });
 
   apply();
+
+  // Re-derive free/paid from the ids that just landed (fork addition). Done
+  // OUTSIDE the transaction above: it is a full-table pass, and a genuinely new
+  // price verdict for even one row is worth a few extra statements rather than
+  // lengthening the window in which the sync holds the write lock.
+  //
+  // The catalog itself carries no price field at all (verified against
+  // v2026.11.12: a model row is platform/modelId/ranks/limits/context/flags and
+  // nothing about cost), so the only evidence available offline is the model id
+  // — OpenRouter's `:free` convention is the one that matters. Catalog rows are
+  // therefore classified 'free' or 'unknown', never 'paid'. That is deliberate:
+  // guessing "paid" from a missing `:free` suffix would disable ~480 of 493
+  // models on the next sync. A real paid verdict has to come from a live price
+  // probe (see services/price-probe.ts) which overrides this.
+  try {
+    const tiered = reclassifyCatalogModelTiers(db);
+    console.log(
+      `[catalog-sync] price tiers after apply: ${tiered.free} free, ` +
+        `${tiered.paid} paid, ${tiered.unknown} unknown`,
+    );
+  } catch (err) {
+    console.warn(`[catalog-sync] price-tier reclassification failed: ${err instanceof Error ? err.message : err}`);
+  }
+
   return counts;
 }
 
@@ -850,8 +909,16 @@ export function startCatalogSync(scheduler: Scheduler): void {
     void syncCatalog();
   };
   cancelBootTimer = scheduler.after(BOOT_DELAY_MS, run);
-  cancelInterval = scheduler.every(SYNC_INTERVAL_MS, run);
-  console.log(`[catalog-sync] polling ${catalogBaseUrl()} every ${SYNC_INTERVAL_MS / 3600000}h`);
+  const intervalMs = catalogSyncIntervalMs();
+  if (intervalMs > 0) {
+    cancelInterval = scheduler.every(intervalMs, run);
+    console.log(`[catalog-sync] polling ${catalogBaseUrl()} every ${(intervalMs / 3600000).toFixed(1)}h`);
+  } else {
+    // Interval 0 means "manual only": seed the recurring handle so the guard at
+    // the top of this function still prevents a second registration.
+    cancelInterval = () => {};
+    console.log('[catalog-sync] interval 0 — polling disabled, manual sync only');
+  }
 }
 
 export function stopCatalogSync(): void {

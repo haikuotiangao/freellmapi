@@ -8,9 +8,15 @@ import {
 
 /**
  * Account-wide per-minute caps. The per-model rpm_limit cannot express these:
- * NVIDIA NIM meters ~40 req/min across the whole account, so every model on it
- * draws from one bucket, and a model row with rpm_limit NULL isn't pre-throttled
- * at all. Without this gate the router keeps dispatching and eats real 429s.
+ * a provider that meters one bucket for the whole key (Agnes free text tier at
+ * 10 RPM, AMD's gateway) needs an account-wide gate, otherwise the router keeps
+ * dispatching and eats real 429s.
+ *
+ * NVIDIA is deliberately NOT one of them: its ~40 RPM is metered per model id,
+ * which a per-model rpm_limit already models correctly. This fork seeds it into
+ * `provider_limits` with scope='model' and these functions ignore that row —
+ * treating it as an account ceiling is what the old hard-coded default did, and
+ * it cost real throughput.
  */
 function seedRequests(platform: string, modelId: string, keyId: number, count: number, atMs: number) {
   const ins = getDb().prepare(`
@@ -33,9 +39,27 @@ describe('provider-wide per-minute request cap', () => {
     delete process.env.PROVIDER_MINUTE_REQUEST_CAP_GROQ;
   });
 
-  it('ships a default cap for nvidia and none for a provider without one', () => {
-    expect(getProviderMinuteRequestCap('nvidia')).toBe(40);
+  it('has no account-wide default for nvidia — its 40 RPM is per model', () => {
+    // This fork moved NVIDIA from an account-wide 40 RPM gate to a
+    // scope='model' profile in provider_limits. Metering it account-wide threw
+    // away throughput: distinct model ids each get their own 40, so the old
+    // gate serialized models that never contended.
+    expect(getProviderMinuteRequestCap('nvidia')).toBeNull();
     expect(getProviderMinuteRequestCap('groq')).toBeNull();
+  });
+
+  it('honours an account-scoped provider_limits row but ignores a model-scoped one', () => {
+    getDb().prepare(`
+      INSERT INTO provider_limits (platform, rpm, scope) VALUES ('agnes', 10, 'account')
+    `).run();
+    expect(getProviderMinuteRequestCap('agnes')).toBe(10);
+
+    getDb().prepare(`
+      INSERT INTO provider_limits (platform, rpm, scope) VALUES ('nvidia', 40, 'model')
+    `).run();
+    // Never read as an account ceiling: that is the bug the old hard-coded
+    // DEFAULT_PROVIDER_MINUTE_REQUEST_CAPS['nvidia'] entry caused.
+    expect(getProviderMinuteRequestCap('nvidia')).toBeNull();
   });
 
   it('honours an env override and treats 0 as disabled', () => {

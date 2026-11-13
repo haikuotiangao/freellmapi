@@ -496,6 +496,13 @@ modelsRouter.get('/', (_req: Request, res: Response) => {
     overrideFields: overriddenFieldNames(m.overrides_json),
     hasProvider: hasProvider(m.platform),
     keyCount: keyCountMap.get(m.platform) ?? 0,
+    // ── Fork additions ────────────────────────────────────────────────────
+    // Cost tier drives the dashboard's "hide paid" filter and the badge on each
+    // row. `priceNote` is the upstream's own price string when we ever observed
+    // one (null for the whole bundled catalog — it publishes no pricing).
+    priceTier: (m.price_tier ?? 'unknown') as 'free' | 'paid' | 'unknown',
+    priceNote: m.price_note ?? null,
+    capabilityTier: m.capability_tier ?? 0,
   }));
 
   res.json(result);

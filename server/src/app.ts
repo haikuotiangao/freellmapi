@@ -19,6 +19,7 @@ import { mediaRouter } from './routes/media.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { healthRouter } from './routes/health.js';
 import { freeTierRouter } from './routes/free-tier.js';
+import { tuningRouter } from './routes/tuning.js';
 import { settingsRouter } from './routes/settings.js';
 import { premiumRouter } from './routes/premium.js';
 import { backupsRouter } from './routes/backups.js';
@@ -262,6 +263,9 @@ export function createApp(config?: Config) {
   app.use('/api/free-tier', requireAuth, freeTierRouter);
   app.use('/api/settings', requireAuth, settingsRouter);
   app.use('/api/premium', requireAuth, premiumRouter);
+  // Fork-only operator surface: free-only switch, catalog bulk passes, the
+  // per-provider rate-limit table and the on-demand provider refresh.
+  app.use('/api/tuning', requireAuth, tuningRouter);
   // Database dumps and restores. Dashboard-session gated: the dump files carry
   // encrypted provider keys and every routing setting, so the unified /v1 key
   // must not open this surface.

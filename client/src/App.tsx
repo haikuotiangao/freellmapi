@@ -39,6 +39,7 @@ import MediaDetailPage from '@/pages/MediaDetailPage'
 import EmbeddingDetailPage from '@/pages/EmbeddingDetailPage'
 import AnalyticsPage from '@/pages/AnalyticsPage'
 import LogsPage from '@/pages/LogsPage'
+import TuningPage from '@/pages/TuningPage'
 import PremiumPage from '@/pages/PremiumPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import AgentsPage from '@/pages/AgentsPage'
@@ -90,6 +91,9 @@ const modelItems = [
 const analyticsItems = [
   { to: '/analytics', labelKey: 'nav.analytics' },
   { to: '/logs', labelKey: 'nav.logs' },
+  // Fork-only: free/paid classification, bulk catalog passes, provider limits.
+  // Parked under Analytics so the top bar does not grow an eighth entry.
+  { to: '/tuning', labelKey: 'nav.tuning' },
 ]
 
 // Nav entries rendered as a split control: the label still navigates, and a
@@ -108,7 +112,8 @@ const navMenus: Record<
   '/analytics': {
     ariaKey: 'nav.analyticsMenu',
     items: analyticsItems,
-    isActive: (pathname) => pathname.startsWith('/analytics') || pathname.startsWith('/logs'),
+    isActive: (pathname) =>
+      pathname.startsWith('/analytics') || pathname.startsWith('/logs') || pathname.startsWith('/tuning'),
   },
 }
 
@@ -470,6 +475,7 @@ function App() {
                       <Route path="/fallback" element={<Navigate to="/models/chat" replace />} />
                       <Route path="/analytics" element={<AnalyticsPage />} />
                       <Route path="/logs" element={<LogsPage />} />
+                      <Route path="/tuning" element={<TuningPage />} />
                       <Route path="/premium" element={<PremiumPage />} />
                       <Route path="/test" element={<Navigate to="/playground" replace />} />
                       <Route path="/health" element={<Navigate to="/keys" replace />} />

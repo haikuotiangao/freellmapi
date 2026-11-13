@@ -35,13 +35,34 @@ describe('startCatalogSync / stopCatalogSync', () => {
     delete process.env.CATALOG_SYNC_DISABLED;
   });
 
-  it('registers a 10-second boot delay and a 12-hour interval', () => {
+  it('registers a 10-second boot delay and the (fork) 3-hour default interval', () => {
     const { scheduler, every, after } = makeScheduler();
     startCatalogSync(scheduler);
     expect(after).toHaveLength(1);
     expect(after[0].ms).toBe(10 * 1000);
     expect(every).toHaveLength(1);
-    expect(every[0].ms).toBe(12 * 60 * 60 * 1000);
+    // Upstream hard-codes 12h here. This fork shortens the default to 3h
+    // because the "monthly" snapshot is in fact rebuilt daily, so 12h left a
+    // fresh build unnoticed for half a day for no benefit (one conditional GET
+    // per poll, 304 when nothing changed).
+    expect(every[0].ms).toBe(3 * 60 * 60 * 1000);
+  });
+
+  it('honours CATALOG_SYNC_INTERVAL_MS', () => {
+    process.env.CATALOG_SYNC_INTERVAL_MS = String(45 * 60 * 1000);
+    const { scheduler, every } = makeScheduler();
+    startCatalogSync(scheduler);
+    expect(every[0].ms).toBe(45 * 60 * 1000);
+    delete process.env.CATALOG_SYNC_INTERVAL_MS;
+  });
+
+  it('registers no interval when CATALOG_SYNC_INTERVAL_MS=0, leaving the boot sync in place', () => {
+    process.env.CATALOG_SYNC_INTERVAL_MS = '0';
+    const { scheduler, every, after } = makeScheduler();
+    startCatalogSync(scheduler);
+    expect(after).toHaveLength(1);
+    expect(every).toHaveLength(0);
+    delete process.env.CATALOG_SYNC_INTERVAL_MS;
   });
 
   it('is idempotent — double-start registers only one set of jobs', () => {

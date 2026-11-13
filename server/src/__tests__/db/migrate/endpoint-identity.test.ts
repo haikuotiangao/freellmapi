@@ -195,9 +195,12 @@ describe('custom model endpoint identity migration', () => {
     try {
       await runMigrations(db, 'up');
       const afterFirstUp = db.prepare('SELECT * FROM models ORDER BY id').all();
-      const schemaAfterFirstUp = db.prepare(
-        "SELECT sql FROM sqlite_master WHERE name = 'models'",
-      ).get() as { sql: string };
+      // Column shape, not the raw CREATE text: the text is not stable across a
+      // rebuild once a later migration has added columns (SQLite appends each
+      // ALTER's clause to the stored CREATE, and a rebuild re-emits them from
+      // PRAGMA). What must hold is the same columns with the same types,
+      // nullability and defaults — which is what the round trip is about.
+      const columnsAfterFirstUp = db.prepare('PRAGMA table_info(models)').all();
 
       endpointIdentityDown(db);
       expect(db.prepare('PRAGMA table_info(models)').all()
@@ -205,8 +208,7 @@ describe('custom model endpoint identity migration', () => {
 
       endpointIdentityUp(db);
       expect(db.prepare('SELECT * FROM models ORDER BY id').all()).toEqual(afterFirstUp);
-      expect((db.prepare("SELECT sql FROM sqlite_master WHERE name = 'models'").get() as { sql: string }).sql)
-        .toBe(schemaAfterFirstUp.sql);
+      expect(db.prepare('PRAGMA table_info(models)').all()).toEqual(columnsAfterFirstUp);
       expect(db.pragma('foreign_key_check')).toEqual([]);
 
       // With a real duplicate on the books, down() has no honest answer.

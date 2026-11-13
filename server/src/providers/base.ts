@@ -223,6 +223,23 @@ export abstract class BaseProvider {
    * on outgoing requests. Defaults to false; set by subclasses. */
   keyless = false;
 
+  /**
+   * The OpenAI-compatible base URL this provider talks to, when it has one.
+   *
+   * Exposed for the operator-triggered catalog refresh (services/model-refresh),
+   * which asks every configured platform "what do you serve right now?" by
+   * calling `<baseUrl>/models`. Before this existed the URL was private to each
+   * subclass and the refresh had no way to reach it, so the only refreshable
+   * platforms were the user's own custom endpoints.
+   *
+   * null means "this adapter has no OpenAI-style /models to ask" — Google,
+   * Cohere, AI Horde and the specialty media adapters all fall in that bucket,
+   * and the refresh skips them rather than guessing a path.
+   */
+  get catalogBaseUrl(): string | null {
+    return null;
+  }
+
   abstract chatCompletion(
     apiKey: string,
     messages: ChatMessage[],

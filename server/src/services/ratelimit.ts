@@ -574,41 +574,65 @@ const DEFAULT_PROVIDER_DAILY_TOKEN_CAPS: Record<string, number> = {
 };
 
 // Per-minute caps that apply to the whole provider account rather than one model.
-// The per-model rpm_limit cannot express these: NVIDIA NIM meters ~40 requests a
-// minute across the entire account, so glm-4.7, minimax-m3 and deepseek all draw
-// from one bucket. Without an account-level gate the router sees each model's own
-// rpm as unspent — and a model row whose rpm_limit is NULL escapes pre-throttling
-// entirely — so it keeps dispatching and eats real 429s.
-const DEFAULT_PROVIDER_MINUTE_REQUEST_CAPS: Record<string, number> = {
-  nvidia: 40,
-};
+// The per-model rpm_limit cannot express these. NOTE the original entry here was
+// `nvidia: 40`, which was wrong in a way that cost real throughput: NVIDIA NIM
+// meters ~40 RPM per MODEL, so distinct model ids never contend and an
+// account-wide 40 gate silently serialized models that had no conflict at all.
+// NVIDIA is now seeded into `provider_limits` with scope='model' (see
+// services/provider-limits.ts) and this table no longer lists it. What remains
+// here is only for platforms whose limit really is one shared bucket AND whose
+// number is not worth a row in the table.
+const DEFAULT_PROVIDER_MINUTE_REQUEST_CAPS: Record<string, number> = {};
+
+/** Read a numeric env override; `0` means "gate disabled". */
+function envCap(name: string): number | null | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return n === 0 ? null : n;
+}
+
+/**
+ * Provider-profile fallback, consulted only for ACCOUNT-scoped limits: a
+ * profile with scope='model' must never be read as an account ceiling, which is
+ * the exact mistake the old `nvidia: 40` entry made. Returns undefined when the
+ * table has nothing to say, so the hard-coded defaults still apply.
+ */
+function profileAccountCap(platform: string, field: 'rpm' | 'rpd' | 'tpd'): number | null | undefined {
+  return withDb(db => {
+    const row = db.prepare('SELECT rpm, rpd, tpd, scope FROM provider_limits WHERE platform = ?')
+      .get(platform) as { rpm: number | null; rpd: number | null; tpd: number | null; scope: string } | undefined;
+    if (!row) return undefined;
+    if (row.scope !== 'account') return undefined;
+    const value = field === 'rpm' ? row.rpm : field === 'rpd' ? row.rpd : row.tpd;
+    return value ?? undefined;
+  });
+}
 
 export function getProviderDailyRequestCap(platform: string): number | null {
-  const raw = process.env[`PROVIDER_DAILY_REQUEST_CAP_${platform.toUpperCase()}`];
-  if (raw !== undefined && raw.trim() !== '') {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0) return n === 0 ? null : n;
-  }
+  const fromEnv = envCap(`PROVIDER_DAILY_REQUEST_CAP_${platform.toUpperCase()}`);
+  if (fromEnv !== undefined) return fromEnv;
+  const fromProfile = profileAccountCap(platform, 'rpd');
+  if (fromProfile !== undefined) return fromProfile;
   return DEFAULT_PROVIDER_DAILY_REQUEST_CAPS[platform] ?? null;
 }
 
 /** Account-wide requests-per-minute cap, or null when the provider has none.
  *  `PROVIDER_MINUTE_REQUEST_CAP_<PLATFORM>=0` disables the gate for that platform. */
 export function getProviderMinuteRequestCap(platform: string): number | null {
-  const raw = process.env[`PROVIDER_MINUTE_REQUEST_CAP_${platform.toUpperCase()}`];
-  if (raw !== undefined && raw.trim() !== '') {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0) return n === 0 ? null : n;
-  }
+  const fromEnv = envCap(`PROVIDER_MINUTE_REQUEST_CAP_${platform.toUpperCase()}`);
+  if (fromEnv !== undefined) return fromEnv;
+  const fromProfile = profileAccountCap(platform, 'rpm');
+  if (fromProfile !== undefined) return fromProfile;
   return DEFAULT_PROVIDER_MINUTE_REQUEST_CAPS[platform] ?? null;
 }
 
 export function getProviderDailyTokenCap(platform: string): number | null {
-  const raw = process.env[`PROVIDER_DAILY_TOKEN_CAP_${platform.toUpperCase()}`];
-  if (raw !== undefined && raw.trim() !== '') {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0) return n === 0 ? null : n;
-  }
+  const fromEnv = envCap(`PROVIDER_DAILY_TOKEN_CAP_${platform.toUpperCase()}`);
+  if (fromEnv !== undefined) return fromEnv;
+  const fromProfile = profileAccountCap(platform, 'tpd');
+  if (fromProfile !== undefined) return fromProfile;
   return DEFAULT_PROVIDER_DAILY_TOKEN_CAPS[platform] ?? null;
 }
 

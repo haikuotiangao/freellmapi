@@ -20,6 +20,9 @@ import { warnOnRoutingOverrideDrift } from './services/model-weight-overrides.js
 import { installLogRedaction } from './lib/log-redaction.js';
 import { cleanupExpiredCooldowns } from './services/ratelimit.js';
 import { loadCacheFromDb } from './services/cache.js';
+import { seedProviderLimits } from './services/provider-limits.js';
+import { reclassifyCatalogModelTiers } from './services/cost-tier.js';
+import { recomputeCapabilityTiers } from './services/capability-tier.js';
 
 // Before any other statement runs, so no provider key can reach stdout — users
 // paste server output into bug reports. Module scope, not inside main(), so it
@@ -43,6 +46,14 @@ async function main() {
     await restoreDbBackupIfNeeded();
   }
   initDb(config.dbPath ?? undefined);
+  // Fork bookkeeping that needs to hold on every boot, not just on the migration
+  // that created the columns: the provider rate-limit profiles (idempotent, and
+  // a no-op once a platform row exists so hand-tuning survives upgrades), and
+  // the derived tier columns that a catalog apply or a restored backup may have
+  // left stale. All three are cheap UPDATE passes over a few hundred rows.
+  seedProviderLimits();
+  reclassifyCatalogModelTiers();
+  recomputeCapabilityTiers();
   applyDeclarativeConfigFromEnv();
   // After initDb: the unknown-model half of this check reads the catalog.
   warnOnRoutingOverrideDrift();

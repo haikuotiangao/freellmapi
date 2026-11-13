@@ -40,6 +40,7 @@ import { modelStatsKey, endpointScopeForBaseUrl } from '../lib/endpoint-scope.js
 import { isToolBenched } from '../lib/tool-capability.js';
 import { parseModelScope, scopeAllows } from '../lib/model-scope.js';
 import { getKeyQuotaHeadroom, inferQuotaPoolKey } from './provider-quota.js';
+import { isFreeOnlyRoutingEnabled } from './cost-tier.js';
 import type { BaseProvider } from '../providers/base.js';
 import type { Platform } from '@freellmapi/shared/types.js';
 import type { Db } from '../db/types.js';
@@ -172,6 +173,19 @@ export interface ChainRow {
   // each hold a row for the same model_id, and everything scored or rate-limited
   // per model has to tell them apart (#651).
   endpoint_scope: string;
+  /**
+   * 'free' | 'paid' | 'unknown' — see services/cost-tier.ts. The router skips
+   * 'paid' rows outright while free-only routing is on; 'unknown' still routes
+   * (refusing to route an unconfirmed price would empty the catalog for every
+   * provider that publishes no pricing at all).
+   */
+  price_tier?: string | null;
+  /**
+   * 1 = frontier, 2 = strong, 3 = supplemental, 0 = unranked. Primary sort key
+   * when set: a manual chain must not be able to promote a toy model above a
+   * frontier one just because it happens to sit higher in the list.
+   */
+  capability_tier?: number | null;
   /**
    * Ordering TIER, ahead of score. 0 (the default, and what every other chain
    * builder produces) is a normal candidate. A higher number is a fallback that
@@ -1071,6 +1085,20 @@ function scoreChainEntry(
  * request. Priority mode is deterministic either way.
  */
 function orderChain(chain: ChainRow[], strategy: RoutingStrategy, sampled = true, task?: 'code' | 'chat'): ChainRow[] {
+  // ── Fork: free-only filter ────────────────────────────────────────────────
+  // Drop paid models before anything else looks at them, so no strategy, tie
+  // breaker or penalty can put one back. 'unknown' rows stay: most providers
+  // publish no pricing at all, and treating "unconfirmed" as "billed" would
+  // take the catalog from 493 models to a handful.
+  //
+  // Applied here rather than in the SQL of every chain builder on purpose:
+  // there are nine of those, they differ per profile/group/alias path, and
+  // missing one would mean a paid model that only leaks through that path.
+  const eligible = isFreeOnlyRoutingEnabled()
+    ? chain.filter(e => e.price_tier !== 'paid')
+    : chain;
+  if (eligible.length !== chain.length) chain = eligible;
+
   // Tier first, always: it is the one ordering input that score must not be able
   // to override (see ChainRow.match_tier). Zero for every chain built anywhere
   // else, so this is a no-op outside slug-fallback resolution.
@@ -1185,6 +1213,7 @@ function getActiveChain(db: Db): ChainRow[] {
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
              m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
              m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
       FROM profile_models pm
       JOIN models m ON m.id = pm.model_db_id AND m.enabled = 1
@@ -1198,6 +1227,7 @@ function getActiveChain(db: Db): ChainRow[] {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id AND m.enabled = 1
@@ -1214,6 +1244,7 @@ function getChainByProfileName(db: Db, name: string): ChainRow[] | null {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM profile_models pm
     JOIN models m ON m.id = pm.model_db_id AND m.enabled = 1
@@ -1236,6 +1267,7 @@ function getChainByGlobalSort(db: Db, globalAxis: string): ChainRow[] {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM models m
     LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
@@ -1663,6 +1695,7 @@ function getModelChainRow(db: Db, modelDbId: number): ChainRow | undefined {
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM models m
     WHERE m.id = ? AND m.enabled = 1
@@ -1775,6 +1808,7 @@ export function resolveModelGroupCandidates(
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
              m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
              m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
       FROM models m
       LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
@@ -1786,6 +1820,7 @@ export function resolveModelGroupCandidates(
              m.platform, m.model_id, m.display_name, m.intelligence_rank,
              m.size_label, m.monthly_token_budget,
              m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
              m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
       FROM models m
       LEFT JOIN profile_models pm ON pm.profile_id = ? AND pm.model_db_id = m.id
@@ -2042,6 +2077,7 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
                m.platform, m.model_id, m.display_name, m.intelligence_rank,
                m.size_label, m.monthly_token_budget,
                m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
                m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
         FROM models m
         WHERE m.id = ? AND m.enabled = 1
@@ -2226,6 +2262,7 @@ export function getRoutingScores(): { strategy: RoutingStrategy; keySelectionStr
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.price_tier, m.capability_tier,
            m.supports_tools, m.context_window, m.key_id, m.endpoint_scope
     FROM models m
     LEFT JOIN ${profileId != null

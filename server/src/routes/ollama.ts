@@ -5,12 +5,12 @@ import type {
   ChatMessage,
   ChatToolDefinition,
 } from '@freellmapi/shared/types.js';
+import { isLoopbackRequest } from '../lib/loopback.js';
 import { getSetting, getUnifiedApiKey } from '../db/index.js';
 import { buildModelListing } from '../services/model-listing.js';
 import { extractApiToken, timingSafeStringEqual } from './proxy.js';
 import { runInboundChat, type InboundChatResult, type InboundChatWire } from '../lib/inbound-chat.js';
-import { secondsUntilNextMonth } from '../services/key-budget.js';
-import { runEmbeddings, EmbeddingsError } from '../services/embeddings.js';
+import { runEmbeddings, embeddingsRetryAfterSec, EmbeddingsError } from '../services/embeddings.js';
 import { validateSession } from '../services/auth.js';
 
 export const ollamaRouter = Router();
@@ -22,20 +22,8 @@ export function getOllamaEmulationMode(): OllamaEmulationMode {
   return stored === 'open-loopback' || stored === 'key-required' ? stored : 'off';
 }
 
-export function isLoopback(req: Request): boolean {
-  const isLoopbackAddress = (value: string | undefined) => {
-    const address = value?.trim().replace(/^::ffff:/i, '');
-    return address === '127.0.0.1' || address === '::1';
-  };
-  if (!isLoopbackAddress(req.socket.remoteAddress)) return false;
-  const forwarded = req.headers['x-forwarded-for'];
-  const firstForwarded = (Array.isArray(forwarded) ? forwarded[0] : forwarded)
-    ?.split(',')[0];
-  // A local reverse proxy is itself a loopback socket, but its first forwarded
-  // hop may be remote. Refuse that request instead of silently widening
-  // open-loopback mode through the proxy.
-  return !firstForwarded || isLoopbackAddress(firstForwarded);
-}
+// The nearest proxy's hop decides, not the caller's: see lib/loopback.ts.
+export const isLoopback = (req: Request): boolean => isLoopbackRequest(req);
 
 function authorize(req: Request, res: Response): boolean {
   if ((req as Request & { urlTokenAuthenticated?: boolean }).urlTokenAuthenticated) {
@@ -585,8 +573,9 @@ async function handleEmbed(req: Request, res: Response, legacy: boolean): Promis
     }
   } catch (error: any) {
     const status = error instanceof EmbeddingsError ? error.status : 502;
-    if (error instanceof EmbeddingsError && error.code === 'quota_exceeded') {
-      res.setHeader('Retry-After', secondsUntilNextMonth());
+    if (error instanceof EmbeddingsError) {
+      const retrySec = embeddingsRetryAfterSec(error);
+      if (retrySec !== undefined) res.setHeader('Retry-After', retrySec);
     }
     res.status(status).json({ error: error.message ?? 'embedding request failed' });
   }

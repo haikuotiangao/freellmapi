@@ -52,6 +52,7 @@ import * as modelMonthlyUsage from '../migrations/20261111_000001_model_monthly_
 import * as profileRoutingStrategy from '../migrations/20261111_000002_profile_routing_strategy.js';
 import * as modelCostTier from '../migrations/20261001_000001_model_cost_tier.js';
 import * as modelRoutingTier from '../migrations/20261002_000001_model_routing_tier.js';
+import * as modelFilterRules from '../migrations/20261115_000001_model_filter_rules.js';
 
 export interface MigrationModule {
   up(db: Db): void;
@@ -115,6 +116,7 @@ export const MODEL_MONTHLY_USAGE_FILENAME = '20261111_000001_model_monthly_usage
 export const PROFILE_ROUTING_STRATEGY_FILENAME = '20261111_000002_profile_routing_strategy.ts';
 export const MODEL_COST_TIER_FILENAME = '20261001_000001_model_cost_tier.ts';
 export const MODEL_ROUTING_TIER_FILENAME = '20261002_000001_model_routing_tier.ts';
+export const MODEL_FILTER_RULES_FILENAME = '20261115_000001_model_filter_rules.ts';
 
 export const DEFAULT_MIGRATIONS: readonly DefaultMigration[] = [
   { filename: LEGACY_BASELINE_FILENAME, module: legacyBaseline },
@@ -174,4 +176,7 @@ export const DEFAULT_MIGRATIONS: readonly DefaultMigration[] = [
   { filename: CLOUDFLARE_NEURON_USAGE_FILENAME, module: cloudflareNeuronUsage },
   { filename: MODEL_MONTHLY_USAGE_FILENAME, module: modelMonthlyUsage },
   { filename: PROFILE_ROUTING_STRATEGY_FILENAME, module: profileRoutingStrategy },
+  // Fork: a new table, so it can sit at the very end without disturbing the
+  // `models` column snapshot ordering above.
+  { filename: MODEL_FILTER_RULES_FILENAME, module: modelFilterRules },
 ];

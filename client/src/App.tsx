@@ -126,6 +126,8 @@ const navMenus: Record<
     ariaKey: 'nav.tuningMenu',
     items: [
       { to: '/tuning?section=tiers', labelKey: 'tuning.navTierGroups' },
+      { to: '/tuning?section=filters', labelKey: 'tuning.navFilters' },
+      { to: '/tuning?section=models', labelKey: 'tuning.navModelEdit' },
       { to: '/tuning?section=providers', labelKey: 'tuning.navProviderConfig' },
       { to: '/tuning?section=refresh', labelKey: 'tuning.refreshAll' },
     ],

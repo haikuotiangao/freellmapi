@@ -33,7 +33,26 @@ export interface RoutingWeights {
 // router.ts) or 'decision' (#1354: a decision model picks one of the four
 // presets per request — see services/routing-decision.ts). Each resolves to a
 // weight vector — the engine is identical.
-export type RoutingStrategy = 'priority' | 'balanced' | 'smartest' | 'fastest' | 'reliable' | 'custom' | 'decision';
+export type RoutingStrategy = 'priority' | 'balanced' | 'smartest' | 'fastest' | 'reliable' | 'custom' | 'decision' | 'tier';
+
+// ── Fork: 'tier' — the operator's three strings ARE the strategy ────────────
+//
+// The fork layers the three strings (第一梯队 / 第二梯队 / 其他) on top of every
+// scored preset: that is the operator's "默认优先调用第一梯队" requirement, so
+// it stays. But an overlay is not a CHOICE — before this, the strategy picker
+// could only change the order INSIDE a string, and there was no way to say
+// "ignore the score entirely, just walk my three strings".
+//
+// 'tier' is that way: routing_tier becomes the primary sort key, INSIDE a
+// string the operator's manual priority stands, and no weight vector / score
+// is consulted at all. That also makes it the one strategy that has to be
+// short-circuited in weightsWithPeak() — BANDIT_PRESETS has no 'tier' entry.
+// Exploration is exempted too: a random unmeasured model must not jump a
+// hand-placed first string.
+//
+// It is deliberately NOT a PresetStrategy: a decision model picks among the
+// four scored presets, and a tier decision needs the operator's placement,
+// which no model can supply.
 
 /** The presets a decision model may choose between, per request. */
 export type PresetStrategy = 'balanced' | 'smartest' | 'fastest' | 'reliable';

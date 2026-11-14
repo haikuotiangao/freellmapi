@@ -56,6 +56,7 @@ const MODEL_MONTHLY_USAGE_FILENAME = '20261111_000001_model_monthly_usage.ts';
 const PROFILE_ROUTING_STRATEGY_FILENAME = '20261111_000002_profile_routing_strategy.ts';
 const MODEL_COST_TIER_FILENAME = '20261001_000001_model_cost_tier.ts';
 const MODEL_ROUTING_TIER_FILENAME = '20261002_000001_model_routing_tier.ts';
+const MODEL_FILTER_RULES_FILENAME = '20261115_000001_model_filter_rules.ts';
 
 interface SchemaRow {
   type: string;
@@ -159,6 +160,7 @@ describe('migration round trip', () => {
         CLOUDFLARE_NEURON_USAGE_FILENAME,
         MODEL_MONTHLY_USAGE_FILENAME,
         PROFILE_ROUTING_STRATEGY_FILENAME,
+        MODEL_FILTER_RULES_FILENAME,
       ]);
     } finally {
       db.close();

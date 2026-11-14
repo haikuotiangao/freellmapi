@@ -513,6 +513,11 @@ export default function TuningPage() {
         </CardContent>
       </Card>
 
+      {/* ── 2b. Custom filters + model editing: right below the strings ── */}
+      <FilterRulesCard />
+
+      <ModelBulkCard />
+
       {/* ── 3. Free-only routing ───────────────────────────────────────── */}
       <Card className="mb-6">
         <CardHeader>
@@ -774,6 +779,530 @@ export default function TuningPage() {
           )}
         </CardContent>
       </Card>
+
     </div>
+  )
+}
+
+// ── Custom filter rules (自定义过滤) ────────────────────────────────────────
+//
+// Kept as standalone components so their own query/mutation state cannot grow
+// the main tuning page's render tree. Both write through /api/tuning/*, which
+// is mounted behind the same requireAuth as the rest of the dashboard.
+
+interface FilterRule {
+  id: number
+  name: string
+  action: 'exclude' | 'include'
+  platform: string | null
+  model_pattern: string | null
+  routing_tier: number | null
+  price_tier: string | null
+  capability_tier: number | null
+  enabled_state: string | null
+  enabled: number
+  priority: number
+  created_at: string
+}
+
+interface FilterPreview {
+  total: number
+  remaining: number
+  dropped: number
+  whitelistActive: boolean
+  perRule: { id: number; name: string; action: string; hits: number }[]
+}
+
+type RuleDraft = {
+  name: string
+  action: 'exclude' | 'include'
+  platform: string
+  modelPattern: string
+  routingTier: string
+  priceTier: string
+  enabledState: string
+  enabled: boolean
+}
+
+const EMPTY_RULE: RuleDraft = {
+  name: '', action: 'exclude', platform: '', modelPattern: '',
+  routingTier: '', priceTier: '', enabledState: '', enabled: true,
+}
+
+function ruleBody(d: RuleDraft) {
+  return {
+    name: d.name.trim() || 'rule',
+    action: d.action,
+    platform: d.platform.trim() || null,
+    modelPattern: d.modelPattern.trim() || null,
+    routingTier: d.routingTier ? Number(d.routingTier) : null,
+    priceTier: d.priceTier || null,
+    enabledState: d.enabledState || null,
+    enabled: d.enabled,
+  }
+}
+
+function FilterRulesCard() {
+  const { t } = useI18n()
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState<RuleDraft>(EMPTY_RULE)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [showForm, setShowForm] = useState(false)
+  const [preview, setPreview] = useState<FilterPreview | null>(null)
+
+  const data = useQuery({
+    queryKey: ['tuning', 'filters'],
+    queryFn: () => apiFetch<{ rules: FilterRule[]; preview: FilterPreview }>('/api/tuning/filters'),
+  })
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['tuning', 'filters'] })
+    void queryClient.invalidateQueries({ queryKey: ['tuning', 'summary'] })
+    void queryClient.invalidateQueries({ queryKey: ['fallback'] })
+  }
+
+  const save = useMutation({
+    mutationFn: () => editingId === null
+      ? apiFetch<Record<string, unknown>>('/api/tuning/filters', { method: 'POST', body: JSON.stringify(ruleBody(draft)) })
+      : apiFetch<Record<string, unknown>>(`/api/tuning/filters/${editingId}`, { method: 'PUT', body: JSON.stringify(ruleBody(draft)) }),
+    onSuccess: () => {
+      toast.success(t('tuning.done'))
+      setDraft(EMPTY_RULE)
+      setEditingId(null)
+      setShowForm(false)
+      setPreview(null)
+      invalidate()
+    },
+  })
+
+  const remove = useMutation({
+    mutationFn: (id: number) => apiFetch<Record<string, unknown>>(`/api/tuning/filters/${id}`, { method: 'DELETE' }),
+    onSuccess: () => { toast.success(t('tuning.done')); invalidate() },
+  })
+
+  const toggle = useMutation({
+    mutationFn: (r: FilterRule) => apiFetch<Record<string, unknown>>(`/api/tuning/filters/${r.id}`, {
+      method: 'PUT', body: JSON.stringify({ enabled: r.enabled !== 1 }),
+    }),
+    onSuccess: () => invalidate(),
+  })
+
+  const previewDraft = useMutation({
+    mutationFn: () => apiFetch<FilterPreview>('/api/tuning/filters/preview', {
+      method: 'POST', body: JSON.stringify({ rule: ruleBody(draft) }),
+    }),
+    onSuccess: setPreview,
+  })
+
+  const rules = data.data?.rules ?? []
+  const livePreview = preview ?? data.data?.preview ?? null
+  const hitsById = new Map((livePreview?.perRule ?? []).map(r => [r.id, r.hits]))
+  const selectClass = 'h-8 rounded-md border border-input bg-background px-2 text-xs'
+
+  const openEdit = (r: FilterRule) => {
+    setEditingId(r.id)
+    setDraft({
+      name: r.name,
+      action: r.action,
+      platform: r.platform ?? '',
+      modelPattern: r.model_pattern ?? '',
+      routingTier: r.routing_tier ? String(r.routing_tier) : '',
+      priceTier: r.price_tier ?? '',
+      enabledState: r.enabled_state ?? '',
+      enabled: r.enabled === 1,
+    })
+    setShowForm(true)
+    setPreview(null)
+  }
+
+  return (
+    <Card id="tuning-filters" className="mb-6 scroll-mt-24">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <ShieldCheck className="size-4" />
+          {t('tuning.filtersTitle')}
+        </CardTitle>
+        <CardDescription>{t('tuning.filtersDescription')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {livePreview && (
+          <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {t('tuning.filtersPreviewSummary')
+              .replace('{total}', String(livePreview.total))
+              .replace('{remaining}', String(livePreview.remaining))
+              .replace('{dropped}', String(livePreview.dropped))}
+            {livePreview.whitelistActive && <span className="ml-2 font-medium text-primary">{t('tuning.filtersWhitelist')}</span>}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => { setShowForm(v => !v); setEditingId(null); setDraft(EMPTY_RULE) }}>
+            {t('tuning.filtersAdd')}
+          </Button>
+        </div>
+
+        {showForm && (
+          <div className="space-y-3 rounded-md border p-3">
+            <div className="grid gap-2 md:grid-cols-3">
+              <Input
+                className="h-8 text-xs"
+                placeholder={t('tuning.filtersNamePlaceholder')}
+                value={draft.name}
+                onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+              />
+              <select
+                className={selectClass}
+                value={draft.action}
+                onChange={e => setDraft(d => ({ ...d, action: e.target.value as RuleDraft['action'] }))}
+              >
+                <option value="exclude">{t('tuning.filtersExclude')}</option>
+                <option value="include">{t('tuning.filtersInclude')}</option>
+              </select>
+              <Input
+                className="h-8 text-xs"
+                placeholder={t('tuning.platform')}
+                value={draft.platform}
+                onChange={e => setDraft(d => ({ ...d, platform: e.target.value }))}
+              />
+              <Input
+                className="h-8 text-xs md:col-span-2"
+                placeholder={t('tuning.filtersPatternHint')}
+                value={draft.modelPattern}
+                onChange={e => setDraft(d => ({ ...d, modelPattern: e.target.value }))}
+              />
+              <select
+                className={selectClass}
+                value={draft.routingTier}
+                onChange={e => setDraft(d => ({ ...d, routingTier: e.target.value }))}
+              >
+                <option value="">{t('tuning.filtersAny')} · {t('tuning.modelsTier')}</option>
+                <option value="1">{t('tuning.tierFirst')}</option>
+                <option value="2">{t('tuning.tierSecond')}</option>
+                <option value="3">{t('tuning.tierOther')}</option>
+              </select>
+              <select
+                className={selectClass}
+                value={draft.priceTier}
+                onChange={e => setDraft(d => ({ ...d, priceTier: e.target.value }))}
+              >
+                <option value="">{t('tuning.filtersAny')} · {t('tuning.modelsPrice')}</option>
+                <option value="free">{t('tuning.tierFree')}</option>
+                <option value="paid">{t('tuning.tierPaid')}</option>
+                <option value="unknown">{t('tuning.tierUnknown')}</option>
+              </select>
+              <select
+                className={selectClass}
+                value={draft.enabledState}
+                onChange={e => setDraft(d => ({ ...d, enabledState: e.target.value }))}
+              >
+                <option value="">{t('tuning.filtersAny')} · {t('tuning.tierEnabled')}</option>
+                <option value="enabled">{t('tuning.tierEnabled')}</option>
+                <option value="disabled">{t('tuning.filtersOff')}</option>
+              </select>
+              <label className="flex items-center gap-2 text-xs">
+                <Switch checked={draft.enabled} onCheckedChange={v => setDraft(d => ({ ...d, enabled: v }))} />
+                {t('tuning.tierEnabled')}
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+                {editingId === null ? t('tuning.filtersAdd') : t('tuning.filtersSaveEdit')}
+              </Button>
+              <Button size="sm" variant="outline" disabled={previewDraft.isPending} onClick={() => previewDraft.mutate()}>
+                {t('tuning.filtersPreview')}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => { setShowForm(false); setEditingId(null); setDraft(EMPTY_RULE); setPreview(null) }}>
+                {t('tuning.filtersCancel')}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {rules.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{t('tuning.filtersEmpty')}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b text-left">
+                  <th className="py-2 pr-3 font-medium">{t('tuning.filtersName')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('tuning.filtersAction')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('tuning.filtersPattern')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('tuning.filtersHits').replace('{n}', '')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('tuning.tierEnabled')}</th>
+                  <th className="py-2 text-right font-medium">{t('tuning.save')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rules.map(r => (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="py-2 pr-3 font-medium">{r.name}</td>
+                    <td className="py-2 pr-3">
+                      <Badge variant={r.action === 'exclude' ? 'destructive' : 'secondary'}>
+                        {r.action === 'exclude' ? t('tuning.filtersExclude') : t('tuning.filtersInclude')}
+                      </Badge>
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-muted-foreground">
+                      {[r.platform, r.model_pattern, r.routing_tier ? `T${r.routing_tier}` : '', r.price_tier].filter(Boolean).join(' / ') || t('tuning.filtersAny')}
+                    </td>
+                    <td className="py-2 pr-3 text-muted-foreground">
+                      {t('tuning.filtersHits').replace('{n}', String(hitsById.get(r.id) ?? 0))}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <Switch checked={r.enabled === 1} onCheckedChange={() => toggle.mutate(r)} />
+                    </td>
+                    <td className="py-2 text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(r)}>{t('tuning.filtersEdit')}</Button>
+                        <ConfirmButton
+                          size="sm"
+                          variant="ghost"
+                          onConfirm={() => remove.mutate(r.id)}
+                        >
+                          {t('tuning.filtersDelete')}
+                        </ConfirmButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Model editing / bulk editing (编辑模型) ─────────────────────────────────
+
+interface EditableModel {
+  id: number
+  platform: string
+  model_id: string
+  display_name: string
+  price_tier: string
+  price_note: string | null
+  capability_tier: number
+  routing_tier: number
+  routing_tier_source: string
+  enabled: number
+}
+
+function ModelBulkCard() {
+  const { t } = useI18n()
+  const queryClient = useQueryClient()
+  const [q, setQ] = useState('')
+  const [platform, setPlatform] = useState('')
+  const [tier, setTier] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [bulkTier, setBulkTier] = useState('')
+  const [bulkPrice, setBulkPrice] = useState('')
+  const [bulkEnabled, setBulkEnabled] = useState('')
+  const limit = 50
+
+  const data = useQuery({
+    queryKey: ['tuning', 'models', q, platform, tier, offset],
+    queryFn: () => apiFetch<{ models: EditableModel[]; total: number; platforms: string[] }>(
+      `/api/tuning/models?q=${encodeURIComponent(q)}&platform=${encodeURIComponent(platform)}&tier=${encodeURIComponent(tier)}&limit=${limit}&offset=${offset}`,
+    ),
+  })
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['tuning'] })
+    void queryClient.invalidateQueries({ queryKey: ['models'] })
+    void queryClient.invalidateQueries({ queryKey: ['fallback'] })
+  }
+
+  const singleEdit = useMutation({
+    mutationFn: ({ id, body }: { id: number; body: Record<string, unknown> }) =>
+      apiFetch<Record<string, unknown>>(`/api/models/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: invalidate,
+  })
+
+  const singleTier = useMutation({
+    mutationFn: ({ id, value }: { id: number; value: number }) =>
+      apiFetch<Record<string, unknown>>(`/api/tuning/routing-tiers/models/${id}`, {
+        method: 'PUT', body: JSON.stringify({ tier: value }),
+      }),
+    onSuccess: invalidate,
+  })
+
+  const bulk = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      apiFetch<Record<string, unknown>>('/api/tuning/models/bulk', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: res => {
+      toast.success(t('tuning.done') + ` (${String(res.updated ?? 0)})`)
+      setSelected(new Set())
+      setBulkTier(''); setBulkPrice(''); setBulkEnabled('')
+      invalidate()
+    },
+  })
+
+  const rows = data.data?.models ?? []
+  const total = data.data?.total ?? 0
+  const platforms = data.data?.platforms ?? []
+  const selectClass = 'h-7 rounded-md border border-input bg-background px-1 text-[11px]'
+  const allSelected = rows.length > 0 && rows.every(r => selected.has(r.id))
+
+  const applyBulk = () => {
+    const patch: Record<string, unknown> = {}
+    if (bulkTier) patch.routingTier = Number(bulkTier)
+    if (bulkPrice) patch.priceTier = bulkPrice
+    if (bulkEnabled) patch.enabled = bulkEnabled === '1'
+    if (selected.size === 0 || Object.keys(patch).length === 0) return
+    bulk.mutate({ ids: [...selected], patch })
+  }
+
+  return (
+    <Card id="tuning-models" className="mb-6 scroll-mt-24">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Layers3 className="size-4" />
+          {t('tuning.modelsTitle')}
+        </CardTitle>
+        <CardDescription>{t('tuning.modelsDescription')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-2 top-2 size-3.5 text-muted-foreground" />
+            <Input
+              className="h-8 w-56 pl-7 text-xs"
+              placeholder={t('tuning.tierSearch')}
+              value={q}
+              onChange={e => { setQ(e.target.value); setOffset(0); setSelected(new Set()) }}
+            />
+          </div>
+          <select className={selectClass} value={platform} onChange={e => { setPlatform(e.target.value); setOffset(0) }}>
+            <option value="">{t('tuning.tierFilterAll')} · {t('tuning.platform')}</option>
+            {platforms.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select className={selectClass} value={tier} onChange={e => { setTier(e.target.value); setOffset(0) }}>
+            <option value="">{t('tuning.tierFilterAll')} · {t('tuning.modelsTier')}</option>
+            <option value="1">{t('tuning.tierFirst')}</option>
+            <option value="2">{t('tuning.tierSecond')}</option>
+            <option value="3">{t('tuning.tierOther')}</option>
+          </select>
+          <span className="text-xs text-muted-foreground">
+            {t('tuning.modelsTotal').replace('{n}', String(total))}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-2">
+          <span className="text-xs font-medium">{t('tuning.modelsSelected').replace('{n}', String(selected.size))}</span>
+          <select className={selectClass} value={bulkTier} onChange={e => setBulkTier(e.target.value)}>
+            <option value="">{t('tuning.tierMoveTo')}</option>
+            <option value="1">{t('tuning.tierFirst')}</option>
+            <option value="2">{t('tuning.tierSecond')}</option>
+            <option value="3">{t('tuning.tierOther')}</option>
+          </select>
+          <select className={selectClass} value={bulkPrice} onChange={e => setBulkPrice(e.target.value)}>
+            <option value="">{t('tuning.modelsPrice')}</option>
+            <option value="free">{t('tuning.tierFree')}</option>
+            <option value="paid">{t('tuning.tierPaid')}</option>
+            <option value="unknown">{t('tuning.tierUnknown')}</option>
+          </select>
+          <select className={selectClass} value={bulkEnabled} onChange={e => setBulkEnabled(e.target.value)}>
+            <option value="">{t('tuning.tierEnabled')}</option>
+            <option value="1">{t('tuning.enableFree')}</option>
+            <option value="0">{t('tuning.filtersOff')}</option>
+          </select>
+          <Button size="sm" disabled={bulk.isPending || selected.size === 0} onClick={applyBulk}>
+            {t('tuning.modelsBulkApply')}
+          </Button>
+          <span className="text-xs text-muted-foreground">{t('tuning.modelsBulkHint')}</span>
+        </div>
+
+        {rows.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{t('tuning.modelsEmpty')}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b text-left">
+                  <th className="w-8 py-2 pr-2">
+                    <input
+                      type="checkbox"
+                      aria-label={t('tuning.modelsSelectAll')}
+                      checked={allSelected}
+                      onChange={e => setSelected(e.target.checked ? new Set(rows.map(r => r.id)) : new Set())}
+                    />
+                  </th>
+                  <th className="py-2 pr-3 font-medium">{t('tuning.tierModel')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('tuning.platform')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('tuning.modelsTier')}</th>
+                  <th className="py-2 pr-3 font-medium">{t('tuning.modelsPrice')}</th>
+                  <th className="py-2 text-right font-medium">{t('tuning.tierEnabled')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="py-2 pr-2">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(r.id)}
+                        onChange={e => setSelected(prev => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(r.id); else next.delete(r.id)
+                          return next
+                        })}
+                      />
+                    </td>
+                    <td className="py-2 pr-3">
+                      <div className="font-mono">{r.model_id}</div>
+                      <div className="text-muted-foreground">{r.display_name}</div>
+                    </td>
+                    <td className="py-2 pr-3 text-muted-foreground">{r.platform}</td>
+                    <td className="py-2 pr-3">
+                      <select
+                        className={selectClass}
+                        value={r.routing_tier}
+                        onChange={e => singleTier.mutate({ id: r.id, value: Number(e.target.value) })}
+                      >
+                        <option value="1">{t('tuning.tierFirst')}</option>
+                        <option value="2">{t('tuning.tierSecond')}</option>
+                        <option value="3">{t('tuning.tierOther')}</option>
+                      </select>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <select
+                        className={selectClass}
+                        value={r.price_tier}
+                        onChange={e => singleEdit.mutate({ id: r.id, body: { priceTier: e.target.value } })}
+                      >
+                        <option value="free">{t('tuning.tierFree')}</option>
+                        <option value="paid">{t('tuning.tierPaid')}</option>
+                        <option value="unknown">{t('tuning.tierUnknown')}</option>
+                      </select>
+                    </td>
+                    <td className="py-2 text-right">
+                      <Switch
+                        checked={r.enabled === 1}
+                        onCheckedChange={v => singleEdit.mutate({ id: r.id, body: { enabled: v } })}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset(o => Math.max(0, o - limit))}>
+            {t('tuning.modelsPrev')}
+          </Button>
+          <Button size="sm" variant="outline" disabled={offset + limit >= total} onClick={() => setOffset(o => o + limit)}>
+            {t('tuning.modelsNext')}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {t('tuning.modelsPage').replace('{n}', String(Math.floor(offset / limit) + 1))}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

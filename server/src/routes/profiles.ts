@@ -54,7 +54,7 @@ const updateSchema = z.object({
   auto_include_new_models: z.boolean().optional(),
   // Per-chain routing preset (#1696). NULL/omitted inherits the global
   // routing_strategy, so untouched chains behave exactly as before.
-  routing_strategy: z.enum(['priority', 'balanced', 'smartest', 'fastest', 'reliable']).nullable().optional(),
+  routing_strategy: z.enum(['priority', 'balanced', 'smartest', 'fastest', 'reliable', 'tier']).nullable().optional(),
 });
 
 function getId(req: Request): number {

@@ -256,6 +256,7 @@ export function ChainManager() {
                     className="h-6 cursor-pointer rounded-md border border-input bg-background px-1 text-[11px] text-muted-foreground disabled:opacity-50"
                   >
                     <option value="">{t('chains.strategyInherit')}</option>
+                    <option value="tier">{t('chains.strategyTier')}</option>
                     <option value="priority">{t('chains.strategyPriority')}</option>
                     <option value="balanced">{t('chains.strategyBalanced')}</option>
                     <option value="smartest">{t('chains.strategySmartest')}</option>

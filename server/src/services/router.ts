@@ -46,6 +46,7 @@ import { parseModelScope, scopeAllows } from '../lib/model-scope.js';
 import { getKeyQuotaHeadroom, inferQuotaPoolKey } from './provider-quota.js';
 import { isFreeOnlyRoutingEnabled } from './cost-tier.js';
 import { buildTierWalkOrder } from './tier-routing.js';
+import { applyFilterRules } from './model-filter-rules.js';
 import type { BaseProvider } from '../providers/base.js';
 import type { Platform } from '@freellmapi/shared/types.js';
 import type { Db } from '../db/types.js';
@@ -541,7 +542,11 @@ export const EXPLORE_CHANCE = 0.1;
 /** A model counts as "has data" once its decay-weighted success+failure
  *  pseudo-count reaches this many samples. */
 export const EXPLORE_MIN_SAMPLES = 5;
-const VALID_STRATEGIES: RoutingStrategy[] = ['priority', 'balanced', 'smartest', 'fastest', 'reliable', 'custom', 'decision'];
+// 'tier' (fork) is the operator's three routing strings as a STRATEGY: tier 1
+// first, then tier 2, then tier 3, with the manual order inside each tier. It
+// has no weight vector — it is the one strategy whose order is not a score —
+// so it must be listed here and short-circuited in weightsWithPeak() below.
+const VALID_STRATEGIES: RoutingStrategy[] = ['priority', 'balanced', 'smartest', 'fastest', 'reliable', 'custom', 'decision', 'tier'];
 
 export function getRoutingStrategy(): RoutingStrategy {
   const raw = getSetting(STRATEGY_KEY);
@@ -783,6 +788,12 @@ export function setCommunityPriors(priors: CommunityPriorMap): number {
 function weightsWithPeak(strategy: RoutingStrategy): { weights: RoutingWeights | null; adjusted: boolean } {
   if (strategy === 'priority') return { weights: null, adjusted: false };
   if (strategy === 'custom') return { weights: getCustomWeights(), adjusted: false };
+  // 'tier' (fork) is not a scored strategy: the operator's three strings ARE
+  // the order, so there is no weight vector to peak-adjust. orderChain has its
+  // own explicit tier branch; this guard is still required because other
+  // callers (getRoutingScores, fusion, the routing echo) ask for the active
+  // weights, and indexing BANDIT_PRESETS with 'tier' would be undefined there.
+  if (strategy === 'tier') return { weights: null, adjusted: false };
   // 'decision' outside a picked request (display, fusion, background) scores
   // as Balanced, the same preset an unsure or unavailable decision falls to.
   if (strategy === 'decision') return weightsWithPeak('balanced');
@@ -1247,10 +1258,57 @@ function orderChain(chain: ChainRow[], strategy: RoutingStrategy, sampled = true
     : chain;
   if (eligible.length !== chain.length) chain = eligible;
 
+  // ── Fork: operator-defined filter rules (自定义过滤) ─────────────────────
+  // Same funnel as the free-only filter, for the same reason: nine different
+  // SQL builders feed this function, and a rule that only some of them honour
+  // is a rule that leaks. Excludes are absolute; an enabled INCLUDE rule turns
+  // the rest into a whitelist. An explicit client pin (routePinnedModel) is
+  // deliberately not filtered — the client asked for that model by name, and
+  // pinning is a newer, request-scoped intent than a standing catalog rule.
+  chain = applyFilterRules(chain).kept;
+
   // Tier first, always: it is the one ordering input that score must not be able
   // to override (see ChainRow.match_tier). Zero for every chain built anywhere
   // else, so this is a no-op outside slug-fallback resolution.
   const tier = (e: ChainRow) => e.match_tier ?? 0;
+
+  // ── Fork: 'tier' strategy — the three strings ARE the order ───────────────
+  // Under every other strategy the operator's first/second/other strings are
+  // layered on top of a scored chain (see buildTierWalkOrder in routeRequest),
+  // and the score decides INSIDE a tier. Under 'tier' there is no score at all:
+  // routing_tier is the primary sort key and the operator's own manual order
+  // stands inside each string. That is what "我就要按梯队走" means, and it is
+  // why this had to become a selectable strategy rather than a modifier.
+  //
+  // `match_tier` stays the OUTER key: it is the slug-alias resolution guarantee
+  // (#651), not a routing string, and must not be demoted by a tier placement.
+  // The 429/failure penalty still works, applied to a DENSE per-tier rank (same
+  // reasoning as the priority branch below: raw `priority` values may be spaced
+  // 10/20/30 or full-catalog 1..N, so adding positions to the raw value is inert).
+  if (strategy === 'tier') {
+    const routingTier = (e: ChainRow) => e.routing_tier ?? 3;
+    const byGroup = chain
+      .map((e, i) => ({ e, i }))
+      .sort((a, b) => tier(a.e) - tier(b.e)
+        || routingTier(a.e) - routingTier(b.e)
+        || a.e.priority - b.e.priority
+        || a.i - b.i);
+    const ranks = new Map<string, number>();
+    return byGroup
+      .map(({ e, i }) => {
+        const key = `${tier(e)}:${routingTier(e)}`;
+        const rank = (ranks.get(key) ?? 0) + 1;
+        ranks.set(key, rank);
+        return { e, i, eff: rank + getPenalty(e.model_db_id) };
+      })
+      .sort((a, b) => tier(a.e) - tier(b.e)
+        || routingTier(a.e) - routingTier(b.e)
+        || a.eff - b.eff
+        || a.e.priority - b.e.priority
+        || a.i - b.i)
+      .map(x => x.e);
+  }
+
   let weights = weightsFor(strategy);
   if (!weights) {
     // Legacy priority mode: manual chain order + the 429/failure penalty,
@@ -2285,7 +2343,9 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
   // losing every bandit draw to prior-heavy rivals. With EXPLORE_CHANCE
   // probability, pick one unmeasured model uniformly and try it first; if it
   // fails, the loop falls through to the scored order as usual. Only for
-  // bandit strategies — Manual is the operator's explicit order.
+  // bandit strategies — Manual is the operator's explicit order, and so is
+  // 'tier' (fork): randomly promoting an unmeasured tier-3 model to the head
+  // of a tier-1 string defeats the whole point of the placement.
   // Candidates the main loop would immediately reject for THIS request are
   // excluded up front (ruled-out models plus the request-level capability
   // gates: vision/tools/structured output/context window): promoting a model
@@ -2296,7 +2356,7 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
   // entirely: probing unmeasured models during a fleet-wide outage just burns
   // retry budget on the same dead providers, and the scored order of known
   // survivors is the only thing worth trying.
-  if (strategy !== 'priority' && getExploreEnabled() && !isDegraded() && Math.random() < EXPLORE_CHANCE) {
+  if (strategy !== 'priority' && strategy !== 'tier' && getExploreEnabled() && !isDegraded() && Math.random() < EXPLORE_CHANCE) {
     // A model the operator zeroed out via MODEL_ROUTING_OVERRIDES never wins a
     // bandit draw, so it would stay under EXPLORE_MIN_SAMPLES forever and become
     // a perpetual probe target — the explicit ban outranks exploration.
@@ -2424,14 +2484,21 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
   servingChain.push(...marginDeferred, ...toolDeferred);
 
   // ── Fork: operator routing tiers ──────────────────────────────────────────
-  // The operator's strings (第一梯队/第二梯队/其他) sit ABOVE the strategy
-  // score: tier 1 is walked TIER1_ROUNDS times before tier 2 is consulted,
-  // tier 3 last, and within each tier the strategy's order stands. A revisit
-  // in a later pass is cheap: skipModels/skipPlatforms already hold everything
-  // the earlier pass ruled out, so only models that are still viable re-enter
+  // The three strings (第一梯队/第二梯队/其他) sit ABOVE the strategy score:
+  // tier 1 is walked TIER1_ROUNDS times before tier 2 is consulted, tier 3
+  // last. Within each string the strategy's order stands — a scored order for
+  // the presets, or the operator's manual order under the 'tier' strategy.
+  // A revisit in a later pass is cheap: skipModels/skipPlatforms already hold
+  // everything the earlier pass ruled out, so only still-viable models re-enter
   // key selection (that is the point — a 429 from pass 1 may have cleared by
   // pass 2, while a hard failure has not).
-  const tierPlan = buildTierWalkOrder(servingChain);
+  //
+  // Selecting the 'tier' STRATEGY implies tiering: it forces `enabled` on so a
+  // stale `tier_routing_enabled = 0` cannot silently make the picked strategy
+  // a no-op. For the other strategies the tuning toggle keeps its old meaning.
+  const tierPlan = buildTierWalkOrder(servingChain, {
+    enabled: strategy === 'tier' ? true : undefined,
+  });
   const walkChain = tierPlan.ordered;
 
   for (const entry of walkChain) {

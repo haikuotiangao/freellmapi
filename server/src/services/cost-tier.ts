@@ -17,6 +17,11 @@ import { getDb, getSetting, setSetting } from '../db/index.js';
 
 export type PriceTier = 'free' | 'paid' | 'unknown';
 
+/** Marker written into `models.price_note` when the OPERATOR set the price
+ *  tier by hand. `reclassifyCatalogModelTiers()` skips those rows so a catalog
+ *  refresh cannot silently undo an explicit human verdict. */
+export const MANUAL_PRICE_NOTE = 'manual';
+
 /** Setting key for the router-level paid-model filter. '1' (default) = on. */
 export const FREE_ONLY_KEY = 'routing_free_only';
 
@@ -107,9 +112,12 @@ export function setModelPriceTier(
  */
 export function reclassifyCatalogModelTiers(db: Db = getDb()): { free: number; paid: number; unknown: number } {
   const rows = db.prepare(`
-    SELECT id, model_id, price_tier FROM models
+    SELECT id, model_id, price_tier, price_note FROM models
      WHERE COALESCE(source, 'catalog') != 'user'
-  `).all() as { id: number; model_id: string; price_tier: string }[];
+       -- Fork: an operator-set price tier carries price_note = MANUAL_PRICE_NOTE.
+       -- A catalog refresh must never quietly undo an explicit human verdict.
+       AND COALESCE(price_note, '') != ?
+  `).all(MANUAL_PRICE_NOTE) as { id: number; model_id: string; price_tier: string }[];
 
   const update = db.prepare('UPDATE models SET price_tier = ? WHERE id = ?');
   const counts = { free: 0, paid: 0, unknown: 0 };

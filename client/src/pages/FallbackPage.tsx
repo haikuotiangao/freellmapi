@@ -56,6 +56,10 @@ import { ChainManager } from '@/components/chain-manager'
 // `tKey` is the i18n suffix under `strategies.*` (label) and `strategies.*Blurb`.
 // It differs from the routing `key` for Manual, whose strategy id is 'priority'.
 const STRATEGIES: { key: RoutingStrategy; tKey: string }[] = [
+  // Fork: 'tier' is the operator's three routing strings as a first-class
+  // strategy. Listed first because it is the one this build is organized
+  // around — the strings decide the order, no score is consulted.
+  { key: 'tier', tKey: 'tier' },
   { key: 'priority', tKey: 'manual' },
   { key: 'balanced', tKey: 'balanced' },
   { key: 'smartest', tKey: 'smartest' },
@@ -191,7 +195,11 @@ export default function FallbackPage() {
 
   const strategy: RoutingStrategy = routing?.strategy ?? 'balanced'
   const keySelection: KeySelectionStrategy = routing?.keySelectionStrategy ?? 'auto'
-  const isManual = strategy === 'priority'
+  // 'tier' is a manual-order strategy too: the strings decide the OUTER order,
+  // and the operator's own chain order decides the order INSIDE each string.
+  // So the drag-to-reorder surface (and the manual-order hint) must stay on;
+  // score columns, conversely, have nothing meaningful to show under 'tier'.
+  const isManual = strategy === 'priority' || strategy === 'tier'
 
   // Merge fallback metadata with live scores, keyed by model. Memoized (#1047):
   // recomputing these over the whole catalog on every render — and the page
@@ -437,7 +445,9 @@ export default function FallbackPage() {
           </div>
 
           <p className="mt-2 text-xs text-muted-foreground">
-            {isManual ? t('strategies.modeManualHint') : t('strategies.modeScoreHint')}
+            {strategy === 'tier' ? t('strategies.tierModeHint')
+              : isManual ? t('strategies.modeManualHint')
+                : t('strategies.modeScoreHint')}
           </p>
 
           {!optionsCollapsed && (

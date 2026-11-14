@@ -13,6 +13,7 @@ import {
   upsertModelOverrides,
   type ModelOverridePatch,
 } from '../services/model-state.js';
+import { MANUAL_PRICE_NOTE } from '../services/cost-tier.js';
 import { pruneUnavailableSavedFusionConfig } from '../services/fusion.js';
 import { getActiveProfileId, ensureModelInProfiles } from '../services/profile-models.js';
 import { endpointScopeForBaseUrl, endpointScopeOfKey, qualifiedModelMemberId } from '../lib/endpoint-scope.js';
@@ -51,9 +52,16 @@ const modelUpdateSchema = z.object({
   supportsVision: z.boolean().optional(),
   supportsTools: z.boolean().optional(),
   fallbackEnabled: z.boolean().optional(),
+  // Fork: the operator's own placement / price verdict. Both are written with
+  // their provenance marker (`routing_tier_source='manual'`, `price_note='manual'`)
+  // so a later catalog refresh cannot silently undo the edit.
+  routingTier: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  priceTier: z.enum(['free', 'paid', 'unknown']).optional(),
 }).strict();
 
-const MODEL_FIELD_COLUMNS: Record<keyof ModelOverridePatch | 'enabled', string> = {
+// `routingTier` / `priceTier` are fork-only columns, not part of the upstream
+// catalog override patch, hence a plain string-keyed map here.
+const MODEL_FIELD_COLUMNS: Record<string, string> = {
   displayName: 'display_name',
   intelligenceRank: 'intelligence_rank',
   speedRank: 'speed_rank',
@@ -67,6 +75,8 @@ const MODEL_FIELD_COLUMNS: Record<keyof ModelOverridePatch | 'enabled', string> 
   supportsVision: 'supports_vision',
   supportsTools: 'supports_tools',
   enabled: 'enabled',
+  routingTier: 'routing_tier',
+  priceTier: 'price_tier',
 };
 
 type ModelRow = {
@@ -312,6 +322,17 @@ modelsRouter.patch('/:id', (req: Request, res: Response) => {
       }
       values.push(id);
       db.prepare(`UPDATE models SET ${assignments.join(', ')} WHERE id = ?`).run(...values);
+
+      // Fork provenance: a hand-placed routing tier must survive the auto-assign
+      // pass, and a hand-set price tier must survive catalog reclassification.
+      // Both services already honour these markers — see tier-routing.ts and
+      // cost-tier.ts. Writing them here is what makes "编辑模型" stick.
+      if (modelPatch.routingTier !== undefined) {
+        db.prepare("UPDATE models SET routing_tier_source = 'manual' WHERE id = ?").run(id);
+      }
+      if (modelPatch.priceTier !== undefined) {
+        db.prepare('UPDATE models SET price_note = ? WHERE id = ?').run(MANUAL_PRICE_NOTE, id);
+      }
 
       if (isCatalogManagedModel(row)) {
         const overridePatch: ModelOverridePatch = {};

@@ -18,6 +18,7 @@
     "logs": "日誌",
     "analyticsMenu": "分析頁面",
     "tuning": "Tuning",
+    "tuningMenu": "分組與廠商",
     "recentCalls": "最近調用"
   },
   "auth": {
@@ -1410,6 +1411,8 @@
     "reasonKeyless": "已排除免密鑰廠商",
     "reasonCustom": "自定義端點走獨立同步",
     "tierTitle": "路由梯隊",
+      "navTierGroups": "模型分組",
+      "navProviderConfig": "廠商設定",
     "tierDescription": "把候選池分成第一梯隊 / 第二梯隊 / 其他梯隊。每次請求先遍歷第一梯隊，按配置的輪數重複走完，仍無響應才轉第二梯隊，最後才是其他梯隊。",
     "tierEnabled": "啟用梯隊路由",
     "tierRounds": "第一梯隊輪數",

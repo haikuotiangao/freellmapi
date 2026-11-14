@@ -17,6 +17,7 @@
     "agents": "智能体",
     "logs": "日志",
     "tuning": "调优",
+    "tuningMenu": "分组与厂商",
     "analyticsMenu": "分析页面",
     "recentCalls": "最近调用"
   },
@@ -64,6 +65,8 @@
     "reasonKeyless": "已排除免密钥厂商",
     "reasonCustom": "自定义端点走独立同步",
     "tierTitle": "路由梯队",
+      "navTierGroups": "模型分组",
+      "navProviderConfig": "厂商配置",
     "tierDescription": "把候选池分成第一梯队 / 第二梯队 / 其他梯队。每次请求先遍历第一梯队，按配置的轮数重复走完，仍无响应才转第二梯队，最后才是其他梯队。",
     "tierEnabled": "启用梯队路由",
     "tierRounds": "第一梯队轮数",

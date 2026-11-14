@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router-dom'
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ChevronDown, KeyRound, LogOut, Menu, MoreHorizontal, Search, Settings } from 'lucide-react'
+import { ChevronDown, History, KeyRound, LogOut, Menu, MoreHorizontal, Search, Settings } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -19,6 +19,7 @@ import { CommandPalette } from '@/components/command-palette'
 import { openCommandPalette } from '@/components/command-palette-state'
 import { ErrorBoundary } from '@/components/error-boundary'
 import { SettingsDialog } from '@/components/settings-dialog'
+import { RecentCallsDialog } from '@/components/recent-calls-quick-view'
 import { Toaster } from '@/components/toaster'
 import { I18nProvider, useI18n } from '@/i18n'
 import { logout } from '@/lib/api'
@@ -64,12 +65,18 @@ const queryClient = new QueryClient({
   }),
 })
 
-const navItems = [
+// Fork-only: the top bar carries the operator's daily tools directly, because
+// burying them one dropdown deep is how they end up "missing". "Groups &
+// providers" opens the tier/limit console; "Recent calls" opens the
+// one-click call log from ANY page.
+const navItems: { to: string; labelKey: string; action?: 'recent-calls' }[] = [
   { to: '/models', labelKey: 'nav.models' },
   { to: '/playground', labelKey: 'nav.playground' },
   { to: '/keys', labelKey: 'nav.keys' },
   { to: '/agents', labelKey: 'nav.agents' },
   { to: '/analytics', labelKey: 'nav.analytics' },
+  { to: '/tuning', labelKey: 'nav.tuningMenu' },
+  { to: '/recent-calls', labelKey: 'nav.recentCalls', action: 'recent-calls' },
 ]
 
 // The modality pages behind "Models"; surfaced in the nav dropdown and
@@ -88,15 +95,10 @@ const modelItems = [
 
 // The pages that hang off "Analytics". Logs is reachable only from here — it is
 // deliberately kept out of navItems so the top bar does not grow a seventh entry.
+// Fork-only "Recent calls" and "Tuning" live in the top bar itself now.
 const analyticsItems = [
   { to: '/analytics', labelKey: 'nav.analytics' },
-  // Fork-only: opens the recent-calls dialog immediately, without scrolling
-  // past the charts. The query param is read by AnalyticsPage.
-  { to: '/analytics?recent=1', labelKey: 'nav.recentCalls' },
   { to: '/logs', labelKey: 'nav.logs' },
-  // Fork-only: free/paid classification, bulk catalog passes, provider limits.
-  // Parked under Analytics so the top bar does not grow an eighth entry.
-  { to: '/tuning', labelKey: 'nav.tuning' },
 ]
 
 // Nav entries rendered as a split control: the label still navigates, and a
@@ -115,8 +117,19 @@ const navMenus: Record<
   '/analytics': {
     ariaKey: 'nav.analyticsMenu',
     items: analyticsItems,
-    isActive: (pathname) =>
-      pathname.startsWith('/analytics') || pathname.startsWith('/logs') || pathname.startsWith('/tuning'),
+    isActive: (pathname) => pathname.startsWith('/analytics') || pathname.startsWith('/logs'),
+  },
+  // Fork-only: the tuning console split into the three things the operator
+  // actually comes here for — tier groups, per-provider limits, and the
+  // one-click catalog refresh. Each entry jumps straight to its card.
+  '/tuning': {
+    ariaKey: 'nav.tuningMenu',
+    items: [
+      { to: '/tuning?section=tiers', labelKey: 'tuning.navTierGroups' },
+      { to: '/tuning?section=providers', labelKey: 'tuning.navProviderConfig' },
+      { to: '/tuning?section=refresh', labelKey: 'tuning.refreshAll' },
+    ],
+    isActive: (pathname) => pathname.startsWith('/tuning'),
   },
 }
 
@@ -228,6 +241,7 @@ function Navbar() {
   const navigate = useNavigate()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [credentialsMode, setCredentialsMode] = useState<'password' | 'email' | null>(null)
+  const [recentCallsOpen, setRecentCallsOpen] = useState(false)
 
   return (
     <>
@@ -251,6 +265,21 @@ function Navbar() {
           >
             {navItems.map((item) => {
               const menu = navMenus[item.to]
+              if (item.action === 'recent-calls') {
+                // Fork-only: a top-level entry that opens the call log in place,
+                // without navigating away from whatever the operator is doing.
+                return (
+                  <button
+                    key={item.to}
+                    type="button"
+                    onClick={() => setRecentCallsOpen(true)}
+                    className="flex items-center gap-1.5 px-1 py-4 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <History className="size-3.5" aria-hidden="true" />
+                    {t(item.labelKey)}
+                  </button>
+                )
+              }
               return menu ? (
                 // Split control: the label navigates, the chevron reveals the
                 // pages hiding behind it.
@@ -324,6 +353,14 @@ function Navbar() {
                 <DropdownMenuGroup>
                   {navItems.map((item) => {
                     const menu = navMenus[item.to]
+                    if (item.action === 'recent-calls') {
+                      return (
+                        <DropdownMenuItem key={item.to} onClick={() => setRecentCallsOpen(true)}>
+                          <History className="size-4" />
+                          {t(item.labelKey)}
+                        </DropdownMenuItem>
+                      )
+                    }
                     return menu ? (
                       <DropdownMenuSub key={item.to}>
                         <DropdownMenuSubTrigger
@@ -366,6 +403,7 @@ function Navbar() {
         </div>
       </header>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <RecentCallsDialog open={recentCallsOpen} onClose={() => setRecentCallsOpen(false)} />
       {credentialsMode && (
         <ChangeCredentialsModal mode={credentialsMode} onClose={() => setCredentialsMode(null)} />
       )}

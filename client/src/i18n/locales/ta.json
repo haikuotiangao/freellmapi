@@ -18,6 +18,7 @@
     "logs": "பதிவுகள்",
     "analyticsMenu": "பகுப்பாய்வு பக்கங்கள்",
     "tuning": "Tuning",
+    "tuningMenu": "Groups & providers",
     "recentCalls": "Recent calls"
   },
   "auth": {
@@ -1410,6 +1411,8 @@
     "reasonKeyless": "keyless provider excluded",
     "reasonCustom": "custom endpoints are synced separately",
     "tierTitle": "Routing tiers",
+      "navTierGroups": "Model groups",
+      "navProviderConfig": "Provider configuration",
     "tierDescription": "Split the pool into tier 1 / tier 2 / other. Every request walks tier 1 first, re-walks it the configured number of passes, then falls through to tier 2 and finally the rest.",
     "tierEnabled": "Use tiered routing",
     "tierRounds": "Tier-1 passes",

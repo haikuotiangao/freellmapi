@@ -193,6 +193,61 @@ scope='model' 的档位永远不会被当成账户闸门读——那正是上面
 桌面版本 `0.16.29`（`desktop/package.json` 与 lock 同步），发布 tag 必须是 `v0.16.29`，
 工作流的「Verify desktop version matches the tag」会校验。
 
+## 第三轮：把入口提到顶栏 + 逐功能截图自检（v0.16.30）
+
+用户反馈「没看到分组、也没看到按厂商配置，最近调用要做成顶栏菜单，不要下面的，
+每个功能做完了要截图自己查看验证」。查下来功能其实都在，但**入口埋得太深**：
+分组和厂商配置在 `/tuning` 页面，而 `/tuning` 挂在「分析」下拉里；最近调用同理。
+这一轮把入口提到顶栏一级，并用 Playwright 驱动本机 Chrome 真跑一遍、逐屏截图核对。
+
+### 1. 顶栏新增两个一级入口
+
+顶栏现在是：模型 / 试验场 / 密钥 / 智能体 / 分析 / **分组与厂商** / **最近调用**。
+
+- **分组与厂商**：split control。点文字进 `/tuning`，点右侧箭头出下拉：
+  「模型分组」`/tuning?section=tiers`、「厂商配置」`/tuning?section=providers`、
+  「一键刷新所有厂商免费模型」`/tuning?section=refresh`。
+- **最近调用**：一级按钮，**在当前页直接弹窗**，不跳走 —— 正在试验场调参时也能一眼看到
+  是哪家厂商哪个模型在服务、成功还是失败。
+
+实现要点：
+
+- `components/recent-calls-quick-view.tsx`（新）：把「最近调用」弹窗从 `AnalyticsPage`
+  里抽成独立组件。`RecentCallsDialog` 自带取数（`/api/analytics/requests?range=24h&limit=100`，
+  打开期间 5 秒刷新），所以任何页面都能开；`AnalyticsPage` 继续复用同一个
+  `RecentCallsQuickView`，两个地方共用 React Query 缓存。
+- `App.tsx`：`navItems` 的类型放宽成 `{ to, labelKey, action? }`，`action: 'recent-calls'`
+  的条目渲染成按钮而不是链接，桌面顶栏和移动端菜单各一份。
+- `TuningPage.tsx`：三张卡片加 `id`（`tuning-refresh` / `tuning-tiers` / `tuning-providers`），
+  读 `?section=` 后 `scrollIntoView` 并给目标卡片加 `ring-2 ring-primary` 高亮。
+
+### 2. 逐功能截图自检（本机 Chrome + playwright-core）
+
+不装浏览器，直接用本机 Chrome：`playwright-core`（`--no-save`）+ `executablePath` 指向
+`C:/Program Files/Google/Chrome/Application/chrome.exe`。脚本落在 `D:\tmp`（临时产物不进仓库）。
+
+走查结果（全部 0 console error）：
+
+| 功能 | 验证方式 | 结果 |
+| --- | --- | --- |
+| 顶栏一级入口 | 读 `header nav` 文本 | 模型 \| 试验场 \| 密钥 \| 智能体 \| 分析 \| 分组与厂商 \| 最近调用 |
+| 最近调用弹窗 | 点顶栏按钮 → 读弹窗 DOM | 弹窗可见，列 = 时间/请求模型/提供方/实际模型/状态/尝试次数/延迟/错误 |
+| 分组与厂商下拉 | 点 chevron → 截图 | 模型分组 / 厂商配置 / 一键刷新所有厂商免费模型 |
+| 梯队分组 | `/tuning?section=tiers` | 第一梯队 3、第二梯队 109、其他梯队 354；轮数可配（默认 2，上限 10） |
+| 编辑梯队成员 | 点「编辑梯队成员」 | 成员表展开，200 行可逐个改梯队 |
+| 厂商配置 | `/tuning?section=providers` | 90/90 家厂商，每行 7 个输入项 + 计量范围下拉 |
+| 限额保存 | 改 RPM=7 → 点「保存」 | toast「已完成」，`provider_limits` 里 agnes 的 rpm 由 10 改成 7（随后已还原为 10） |
+
+### 3. 顺手修掉的一个真 bug
+
+下拉第三项原本写成 `tuning.navRefreshAll`，但这个键并不存在，界面直接显示键名。
+改用已存在的 `tuning.refreshAll`。并补了一个**全项目静态 i18n 键扫描**脚本
+（扫 `t('x.y')` 静态调用，比对 `en.json`）——生产代码 0 缺失，剩下 2 处都在测试文件里。
+
+### 版本
+
+桌面版本 `0.16.30`（`desktop/package.json` 与 lock 同步），发布 tag 必须是 `v0.16.30`。
+
 ## 环境变量
 
 | 变量 | 说明 |

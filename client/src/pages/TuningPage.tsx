@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   RefreshCw, Sparkles, Wand2, ShieldCheck, Gauge, Layers3,
@@ -125,6 +126,18 @@ function reasonText(reason: string, t: (k: string) => string): string {
 export default function TuningPage() {
   const { t } = useI18n()
   const queryClient = useQueryClient()
+  // The top bar's "Groups & providers" menu jumps straight to one of the
+  // cards below (?section=tiers|providers|refresh): scroll it into view and
+  // mark it, so the operator lands on the card they asked for.
+  const [searchParams] = useSearchParams()
+  const section = searchParams.get('section')
+  const [activeSection, setActiveSection] = useState<string | null>(null)
+  useEffect(() => {
+    if (!section) return
+    setActiveSection(section)
+    const target = document.getElementById(`tuning-${section}`)
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [section])
   const [report, setReport] = useState<RefreshReport | null>(null)
   const [showSkipped, setShowSkipped] = useState(false)
   const [limitDraft, setLimitDraft] = useState<Record<string, LimitDraft>>({})
@@ -275,7 +288,10 @@ export default function TuningPage() {
       />
 
       {/* ── 1. One-click refresh: deliberately the FIRST thing on the page ── */}
-      <Card className="mb-6 border-primary/40">
+      <Card
+        id="tuning-refresh"
+        className={`mb-6 border-primary/40 scroll-mt-24 ${activeSection === 'refresh' ? 'ring-2 ring-primary' : ''}`}
+      >
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <RefreshCw className="size-4" />
@@ -343,7 +359,10 @@ export default function TuningPage() {
       </Card>
 
       {/* ── 2. Three operator routing strings + configurable pass count ──── */}
-      <Card className="mb-6">
+      <Card
+        id="tuning-tiers"
+        className={`mb-6 scroll-mt-24 ${activeSection === 'tiers' ? 'ring-2 ring-primary' : ''}`}
+      >
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Layers3 className="size-4" />
@@ -592,7 +611,10 @@ export default function TuningPage() {
       </Card>
 
       {/* ── 5. EVERY provider's limits, explained AND editable ──────────── */}
-      <Card className="mb-6">
+      <Card
+        id="tuning-providers"
+        className={`mb-6 scroll-mt-24 ${activeSection === 'providers' ? 'ring-2 ring-primary' : ''}`}
+      >
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Gauge className="size-4" />

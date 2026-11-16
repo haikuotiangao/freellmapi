@@ -79,12 +79,25 @@ export function idLooksLikeJunk(modelId: string): boolean {
 }
 
 /**
- * Recompute `capability_tier` for every catalog row.
+ * Recompute `capability_tier` for every row.
  *
  * Id patterns win over the catalog rank because the rank was assigned by
  * whatever generated the catalog and is not a quality judgement for these
- * families at all. `source = 'user'` rows always land on 0 (unranked): the
- * operator added them on purpose and the app must not start judging them.
+ * families at all.
+ *
+ * User-created rows (`source = 'user'`, i.e. endpoints the operator registered
+ * themselves) ARE ranked now. They used to be forced to tier 0, which had two
+ * bad consequences: the auto-assign pass maps 1 → routing tier 1 and
+ * everything else → "other", so a catalog of self-registered endpoints could
+ * never populate the first string at all (0 models in tier 1, forever), while
+ * the best-ranked models in the whole database — the ones the operator
+ * deliberately wired up — sank to "other". Ranking them is what makes
+ * "my own endpoints come first" true instead of aspirational.
+ *
+ * `disableJunkModels()` still excludes `source = 'user'`, so ranking a
+ * self-registered endpoint as tier 4 can never get it switched off behind the
+ * operator's back. The junk id patterns are also skipped for those rows: an
+ * operator who registered `something-1b` wants that model, not a lecture.
  */
 export function recomputeCapabilityTiers(db: Db = getDb()): Record<string, number> {
   const rows = db.prepare(`
@@ -98,7 +111,10 @@ export function recomputeCapabilityTiers(db: Db = getDb()): Record<string, numbe
     for (const row of rows) {
       let tier: number;
       if (row.source === 'user') {
-        tier = 0;
+        // Rank it like anything else, but never drag it to junk: the operator
+        // put it there on purpose.
+        const ranked = tierFromRank(row.intelligence_rank);
+        tier = ranked === JUNK_TIER ? 0 : ranked;
       } else if (idLooksLikeJunk(row.model_id)) {
         tier = JUNK_TIER;
       } else {

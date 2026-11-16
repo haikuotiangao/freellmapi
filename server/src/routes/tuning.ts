@@ -446,11 +446,32 @@ tuningRouter.delete('/filters/:id', (req, res) => {
 
 // ── Model editing / bulk editing (编辑模型) ─────────────────────────────────
 
+const MODEL_PAGE_COLUMNS = `
+  id, platform, model_id, display_name, price_tier, price_note,
+  capability_tier, routing_tier, routing_tier_source, enabled,
+  supports_vision, supports_tools, context_window, key_id`;
+
 /**
- * GET /api/tuning/models?tier=&q=&platform=&enabled=&limit=&offset=
+ * GET /api/tuning/models
+ *   ?tier=&q=&platform=&enabled=&price=&configuredOnly=&limit=&offset=
  *
  * The editable catalog behind the bulk editor. Kept separate from
  * /routing-tiers/models so the two surfaces can paginate independently.
+ *
+ * Two things this endpoint gets right that the earlier version did not:
+ *
+ * 1. `ORDER BY` is the full tier walk — routing tier, then capability tier,
+ *    then provider/id. Without the capability tiebreaker a page of 50 rows is
+ *    ordered only by the three routing strings, so ~900 "other" models come
+ *    back in provider order and the list looks arbitrary. Sorting 1 → 2 → 3
+ *    is the operator's stated expectation; the stable secondary keys keep
+ *    pagination honest (same row never appears on two pages).
+ *
+ * 2. `configuredOnly=1` narrows to rows the operator can actually call: a
+ *    model whose platform has an enabled api_keys row, or one bound to a key
+ *    by key_id. Catalog breadth is fine for browsing, but the free-model
+ *    sweep the operator runs is about THEIR keys — 434 openrouter rows and
+ *    469 kilo rows are noise when only a handful of endpoints are wired up.
  */
 tuningRouter.get('/models', (req, res) => {
   const db = getDb();
@@ -459,6 +480,15 @@ tuningRouter.get('/models', (req, res) => {
   const tierRaw = typeof req.query.tier === 'string' ? Number.parseInt(req.query.tier, 10) : NaN;
   const tier = tierRaw === 1 || tierRaw === 2 || tierRaw === 3 ? tierRaw : null;
   const enabledRaw = typeof req.query.enabled === 'string' ? req.query.enabled : '';
+  const priceRaw = typeof req.query.price === 'string' ? req.query.price : '';
+  // 'routable' = what the router actually keeps when free-only is on: everything
+  // that is not proven paid. Filtering `price_tier = 'free'` instead would hide
+  // every unpriced row, which is most user-created endpoints (their pricing is
+  // simply not published) — precisely the models the operator is looking for.
+  const price = priceRaw === 'routable' || priceRaw === 'free' || priceRaw === 'paid' || priceRaw === 'unknown'
+    ? priceRaw
+    : null;
+  const configuredOnly = req.query.configuredOnly === '1';
   const limitRaw = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 100;
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 1000) : 100;
   const offsetRaw = typeof req.query.offset === 'string' ? Number.parseInt(req.query.offset, 10) : 0;
@@ -469,20 +499,47 @@ tuningRouter.get('/models', (req, res) => {
   if (q) { clauses.push('(model_id LIKE ? OR display_name LIKE ?)'); args.push(`%${q}%`, `%${q}%`); }
   if (platform) { clauses.push('platform = ?'); args.push(platform); }
   if (tier) { clauses.push('routing_tier = ?'); args.push(tier); }
+  if (price === 'routable') { clauses.push("price_tier != 'paid'"); }
+  else if (price) { clauses.push('price_tier = ?'); args.push(price); }
   if (enabledRaw === '1' || enabledRaw === '0') { clauses.push('enabled = ?'); args.push(Number(enabledRaw)); }
+  if (configuredOnly) {
+    // A model is "callable" when it is bound to a key (custom endpoints do
+    // this) or when its platform has at least one enabled key row. The
+    // platform test is what catches openrouter: hundreds of catalog rows share
+    // one key and none of them carry key_id.
+    clauses.push(`(
+      key_id IN (SELECT id FROM api_keys WHERE enabled = 1)
+      OR (key_id IS NULL AND platform IN (SELECT platform FROM api_keys WHERE enabled = 1))
+    )`);
+  }
   const where = clauses.join(' AND ');
   const total = (db.prepare(`SELECT COUNT(*) AS n FROM models WHERE ${where}`).get(...args) as { n: number }).n;
   const models = db.prepare(`
-    SELECT id, platform, model_id, display_name, price_tier, price_note,
-           capability_tier, routing_tier, routing_tier_source, enabled,
-           supports_vision, supports_tools, context_window
+    SELECT ${MODEL_PAGE_COLUMNS}
       FROM models
      WHERE ${where}
-     ORDER BY routing_tier ASC, platform ASC, model_id ASC
+     ORDER BY routing_tier ASC,
+              -- capability_tier 0 means "unranked": user-created endpoints and
+              -- catalog rows with no intelligence_rank. Sorting them last would
+              -- bury exactly the models the operator wired up themselves, so
+              -- they lead their tier instead (the UI shows the tier header
+              -- anyway, so this reads as "my own stuff first").
+              CASE WHEN capability_tier = 0 THEN -1 ELSE capability_tier END ASC,
+              platform ASC, model_id ASC
      LIMIT ? OFFSET ?
   `).all(...args, limit, offset);
   const platforms = db.prepare('SELECT DISTINCT platform FROM models ORDER BY platform').all() as { platform: string }[];
-  res.json({ models, total, limit, offset, platforms: platforms.map(p => p.platform) });
+  const configuredPlatforms = db.prepare(
+    'SELECT DISTINCT platform FROM api_keys WHERE enabled = 1 ORDER BY platform',
+  ).all() as { platform: string }[];
+  res.json({
+    models,
+    total,
+    limit,
+    offset,
+    platforms: platforms.map(p => p.platform),
+    configuredPlatforms: configuredPlatforms.map(p => p.platform),
+  });
 });
 
 const bulkPatchSchema = z.object({

@@ -1486,6 +1486,14 @@
     "modelsTier": "Tier",
     "modelsPrice": "Price tier",
     "navFilters": "Custom filters",
-    "navModelEdit": "Edit models"
+    "navModelEdit": "Edit models",
+    "modelsPriceAll": "All prices",
+    "modelsConfiguredOnly": "Only my keys",
+    "modelsConfiguredHint": "Showing models you can actually call: {n} provider(s) with an enabled key. Turn the switch off to browse the full catalog.",
+    "modelsAllHint": "Full catalog, including providers you have no key for. Routing will skip those until you add one.",
+    "modelsGroupCount": "· {n} shown",
+    "modelsBoundKey": "Bound to an API key",
+    "modelsOrderHint": "Sorted tier 1 → tier 2 → other, then by ability inside each tier.",
+    "modelsPriceRoutable": "Free / routable (not paid)"
   }
 }

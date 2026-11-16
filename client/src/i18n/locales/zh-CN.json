@@ -136,7 +136,15 @@
     "modelsTier": "梯队",
     "modelsPrice": "价格档",
     "navFilters": "自定义过滤",
-    "navModelEdit": "编辑模型"
+    "navModelEdit": "编辑模型",
+    "modelsPriceAll": "全部价格档",
+    "modelsConfiguredOnly": "只看我配了 key 的",
+    "modelsConfiguredHint": "只显示你能真正调用的模型：{n} 个厂商已配置可用 key。关掉开关可浏览完整目录。",
+    "modelsAllHint": "完整目录，包含你还没配 key 的厂商。这些模型在配好 key 之前不会被路由。",
+    "modelsGroupCount": "· 本页 {n} 个",
+    "modelsBoundKey": "已绑定 API key",
+    "modelsOrderHint": "按第一梯队 → 第二梯队 → 其他梯队排序，梯队内按能力档排序。",
+    "modelsPriceRoutable": "免费/可路由（非收费）"
   },
   "auth": {
     "createYourAccount": "创建账号",

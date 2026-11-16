@@ -1087,6 +1087,7 @@ interface EditableModel {
   routing_tier: number
   routing_tier_source: string
   enabled: number
+  key_id: number | null
 }
 
 function ModelBulkCard() {
@@ -1095,6 +1096,8 @@ function ModelBulkCard() {
   const [q, setQ] = useState('')
   const [platform, setPlatform] = useState('')
   const [tier, setTier] = useState('')
+  const [price, setPrice] = useState('routable')
+  const [configuredOnly, setConfiguredOnly] = useState(true)
   const [offset, setOffset] = useState(0)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkTier, setBulkTier] = useState('')
@@ -1103,9 +1106,16 @@ function ModelBulkCard() {
   const limit = 50
 
   const data = useQuery({
-    queryKey: ['tuning', 'models', q, platform, tier, offset],
-    queryFn: () => apiFetch<{ models: EditableModel[]; total: number; platforms: string[] }>(
-      `/api/tuning/models?q=${encodeURIComponent(q)}&platform=${encodeURIComponent(platform)}&tier=${encodeURIComponent(tier)}&limit=${limit}&offset=${offset}`,
+    queryKey: ['tuning', 'models', q, platform, tier, price, configuredOnly, offset],
+    queryFn: () => apiFetch<{
+      models: EditableModel[]
+      total: number
+      platforms: string[]
+      configuredPlatforms: string[]
+    }>(
+      `/api/tuning/models?q=${encodeURIComponent(q)}&platform=${encodeURIComponent(platform)}`
+      + `&tier=${encodeURIComponent(tier)}&price=${encodeURIComponent(price)}`
+      + `&configuredOnly=${configuredOnly ? '1' : '0'}&limit=${limit}&offset=${offset}`,
     ),
   })
 
@@ -1143,8 +1153,20 @@ function ModelBulkCard() {
   const rows = data.data?.models ?? []
   const total = data.data?.total ?? 0
   const platforms = data.data?.platforms ?? []
+  const configuredPlatforms = data.data?.configuredPlatforms ?? []
   const selectClass = 'h-7 rounded-md border border-input bg-background px-1 text-[11px]'
   const allSelected = rows.length > 0 && rows.every(r => selected.has(r.id))
+  const tierLabel = (n: number) =>
+    n === 1 ? t('tuning.tierFirst') : n === 2 ? t('tuning.tierSecond') : t('tuning.tierOther')
+  // Rows arrive pre-sorted 1 → 2 → 3, so a group break is just "the tier
+  // changed". Rendering the header here (rather than as extra <tr>s the API
+  // would have to model) keeps the count correct even mid-group on a page edge.
+  const tierGroups = rows.reduce<{ tier: number; items: EditableModel[] }[]>((acc, r) => {
+    const last = acc[acc.length - 1]
+    if (last && last.tier === r.routing_tier) last.items.push(r)
+    else acc.push({ tier: r.routing_tier, items: [r] })
+    return acc
+  }, [])
 
   const applyBulk = () => {
     const patch: Record<string, unknown> = {}
@@ -1185,10 +1207,30 @@ function ModelBulkCard() {
             <option value="2">{t('tuning.tierSecond')}</option>
             <option value="3">{t('tuning.tierOther')}</option>
           </select>
+          <select className={selectClass} value={price} onChange={e => { setPrice(e.target.value); setOffset(0) }}>
+            <option value="">{t('tuning.modelsPriceAll')}</option>
+            <option value="routable">{t('tuning.modelsPriceRoutable')}</option>
+            <option value="free">{t('tuning.tierFree')}</option>
+            <option value="unknown">{t('tuning.tierUnknown')}</option>
+            <option value="paid">{t('tuning.tierPaid')}</option>
+          </select>
+          <label className="flex items-center gap-2 text-xs">
+            <Switch checked={configuredOnly} onCheckedChange={v => { setConfiguredOnly(v); setOffset(0) }} />
+            {t('tuning.modelsConfiguredOnly')}
+          </label>
           <span className="text-xs text-muted-foreground">
             {t('tuning.modelsTotal').replace('{n}', String(total))}
           </span>
         </div>
+
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Info className="size-3.5 mt-0.5 shrink-0" />
+          {configuredOnly
+            ? t('tuning.modelsConfiguredHint').replace('{n}', String(configuredPlatforms.length))
+            : t('tuning.modelsAllHint')}
+          {' '}
+          {t('tuning.modelsOrderHint')}
+        </p>
 
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-2">
           <span className="text-xs font-medium">{t('tuning.modelsSelected').replace('{n}', String(selected.size))}</span>
@@ -1237,56 +1279,71 @@ function ModelBulkCard() {
                   <th className="py-2 text-right font-medium">{t('tuning.tierEnabled')}</th>
                 </tr>
               </thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.id} className="border-b last:border-0">
-                    <td className="py-2 pr-2">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(r.id)}
-                        onChange={e => setSelected(prev => {
-                          const next = new Set(prev)
-                          if (e.target.checked) next.add(r.id); else next.delete(r.id)
-                          return next
-                        })}
-                      />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <div className="font-mono">{r.model_id}</div>
-                      <div className="text-muted-foreground">{r.display_name}</div>
-                    </td>
-                    <td className="py-2 pr-3 text-muted-foreground">{r.platform}</td>
-                    <td className="py-2 pr-3">
-                      <select
-                        className={selectClass}
-                        value={r.routing_tier}
-                        onChange={e => singleTier.mutate({ id: r.id, value: Number(e.target.value) })}
-                      >
-                        <option value="1">{t('tuning.tierFirst')}</option>
-                        <option value="2">{t('tuning.tierSecond')}</option>
-                        <option value="3">{t('tuning.tierOther')}</option>
-                      </select>
-                    </td>
-                    <td className="py-2 pr-3">
-                      <select
-                        className={selectClass}
-                        value={r.price_tier}
-                        onChange={e => singleEdit.mutate({ id: r.id, body: { priceTier: e.target.value } })}
-                      >
-                        <option value="free">{t('tuning.tierFree')}</option>
-                        <option value="paid">{t('tuning.tierPaid')}</option>
-                        <option value="unknown">{t('tuning.tierUnknown')}</option>
-                      </select>
-                    </td>
-                    <td className="py-2 text-right">
-                      <Switch
-                        checked={r.enabled === 1}
-                        onCheckedChange={v => singleEdit.mutate({ id: r.id, body: { enabled: v } })}
-                      />
+              {tierGroups.map(group => (
+                <tbody key={group.tier}>
+                  <tr className="bg-muted/50">
+                    <td colSpan={6} className="py-1.5 pr-2 text-[11px] font-medium text-muted-foreground">
+                      {tierLabel(group.tier)}
+                      <span className="ml-2 font-normal">
+                        {t('tuning.modelsGroupCount').replace('{n}', String(group.items.length))}
+                      </span>
                     </td>
                   </tr>
-                ))}
-              </tbody>
+                  {group.items.map(r => (
+                    <tr key={r.id} className="border-b last:border-0">
+                      <td className="py-2 pr-2">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.id)}
+                          onChange={e => setSelected(prev => {
+                            const next = new Set(prev)
+                            if (e.target.checked) next.add(r.id); else next.delete(r.id)
+                            return next
+                          })}
+                        />
+                      </td>
+                      <td className="py-2 pr-3">
+                        <div className="font-mono">{r.model_id}</div>
+                        <div className="text-muted-foreground">{r.display_name}</div>
+                      </td>
+                      <td className="py-2 pr-3 text-muted-foreground">
+                        {r.platform}
+                        {r.key_id != null && (
+                          <span className="ml-1 text-[10px] text-primary" title={t('tuning.modelsBoundKey')}>●</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <select
+                          className={selectClass}
+                          value={r.routing_tier}
+                          onChange={e => singleTier.mutate({ id: r.id, value: Number(e.target.value) })}
+                        >
+                          <option value="1">{t('tuning.tierFirst')}</option>
+                          <option value="2">{t('tuning.tierSecond')}</option>
+                          <option value="3">{t('tuning.tierOther')}</option>
+                        </select>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <select
+                          className={selectClass}
+                          value={r.price_tier}
+                          onChange={e => singleEdit.mutate({ id: r.id, body: { priceTier: e.target.value } })}
+                        >
+                          <option value="free">{t('tuning.tierFree')}</option>
+                          <option value="paid">{t('tuning.tierPaid')}</option>
+                          <option value="unknown">{t('tuning.tierUnknown')}</option>
+                        </select>
+                      </td>
+                      <td className="py-2 text-right">
+                        <Switch
+                          checked={r.enabled === 1}
+                          onCheckedChange={v => singleEdit.mutate({ id: r.id, body: { enabled: v } })}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              ))}
             </table>
           </div>
         )}

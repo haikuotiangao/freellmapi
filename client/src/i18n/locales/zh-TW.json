@@ -1486,6 +1486,14 @@
     "modelsTier": "梯隊",
     "modelsPrice": "價格檔",
     "navFilters": "自訂過濾",
-    "navModelEdit": "編輯模型"
+    "navModelEdit": "編輯模型",
+    "modelsPriceAll": "全部價格檔",
+    "modelsConfiguredOnly": "只看我設了 key 的",
+    "modelsConfiguredHint": "只顯示你能真正呼叫的模型：{n} 個廠商已設定可用 key。關掉開關可瀏覽完整目錄。",
+    "modelsAllHint": "完整目錄，包含你還沒設 key 的廠商。這些模型在設好 key 之前不會被路由。",
+    "modelsGroupCount": "· 本頁 {n} 個",
+    "modelsBoundKey": "已綁定 API key",
+    "modelsOrderHint": "按第一梯隊 → 第二梯隊 → 其他梯隊排序，梯隊內按能力檔排序。",
+    "modelsPriceRoutable": "免費/可路由（非收費）"
   }
 }

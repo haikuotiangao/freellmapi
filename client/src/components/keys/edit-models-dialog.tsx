@@ -10,8 +10,33 @@ import { scopeCandidates } from '@/lib/model-scope-selection'
 import { X } from 'lucide-react'
 import type { ApiKey } from '../../../../shared/types'
 
-/** Re-open the post-add model picker for an existing key. The catalog is the
- *  source for fixed providers; custom endpoints use their registered models. */
+/** Re-open the post-add model picker for an existing key. The provider's LIVE
+ *  /models is the source of truth: a model the provider retired (e.g. NVIDIA
+ *  dropping DeepSeek) must disappear from the picker even if the signed
+ *  catalog's monthly snapshot still lists it. If the live fetch fails, the
+ *  signed catalog is kept as a fallback so the operator is never locked out. */
+interface LiveDiscoveredModel {
+  id: string
+  priceNote?: string
+  isFree?: boolean
+  contextWindow?: number
+  vision?: boolean
+  kind?: string
+}
+interface LivePreview {
+  models: LiveDiscoveredModel[]
+  total: number
+}
+
+interface Candidate {
+  modelId: string
+  displayName: string
+  sizeLabel: string | null
+  contextWindow: number | null
+  priceNote?: string
+  isFree?: boolean
+}
+
 export function EditModelsDialog({
   apiKey,
   onOpenChange,
@@ -22,13 +47,27 @@ export function EditModelsDialog({
   const { t } = useI18n()
   const queryClient = useQueryClient()
 
+  // Static catalog: the fallback when the live fetch fails, and the source for
+  // built-in providers catalog-sync owns display metadata for.
   const { data: catalog = [] } = useQuery<Pick<FallbackEntry, 'platform' | 'modelId' | 'displayName' | 'sizeLabel' | 'contextWindow'>[]>({
     queryKey: ['models'],
     queryFn: () => apiFetch('/api/models'),
-    enabled: apiKey.platform !== 'custom',
   })
 
-  const candidates = apiKey.platform === 'custom'
+  // Live list from the provider itself, read-only. The dialog is mounted only
+  // while open, so this fires on open and needs no reset effect.
+  const live = useQuery<LivePreview>({
+    queryKey: ['key-preview-models', apiKey.id],
+    queryFn: () => apiFetch('/api/keys/preview-models', {
+      method: 'POST',
+      body: JSON.stringify({ keyId: apiKey.id }),
+    }),
+    retry: false,
+    gcTime: 0,
+    staleTime: 0,
+  })
+
+  const catalogCandidates: Candidate[] = apiKey.platform === 'custom'
     ? (apiKey.models ?? [])
       .filter(model => model.kind === 'chat')
       .map(model => ({
@@ -37,11 +76,32 @@ export function EditModelsDialog({
         sizeLabel: null,
         contextWindow: null,
       }))
-    : scopeCandidates(catalog, apiKey.platform)
+    : scopeCandidates(catalog, apiKey.platform).map(model => ({
+        modelId: model.modelId,
+        displayName: model.displayName,
+        sizeLabel: model.sizeLabel,
+        contextWindow: model.contextWindow,
+      }))
 
-  const allIds = candidates.map(model => model.modelId)
-  // Keep "all" as a mode rather than snapshotting every current id: the
-  // catalog query resolves after mount, and a stored full list would go stale.
+  // Live wins when it answered with a non-empty list. An empty live list means
+  // "provider currently serves nothing" — rare, and refusing to fall back
+  // would blank the picker, so treat it like a failure and keep the catalog.
+  const liveModels = live.data?.models ?? []
+  const useLive = !live.isPending && !live.isError && liveModels.length > 0
+  const candidates: Candidate[] = useLive
+    ? liveModels.map(m => ({
+        modelId: m.id,
+        displayName: m.id,
+        sizeLabel: null,
+        contextWindow: m.contextWindow ?? null,
+        priceNote: m.priceNote,
+        isFree: m.isFree,
+      }))
+    : catalogCandidates
+
+  const allIds = candidates.map(m => m.modelId)
+  // Keep "all" as a mode rather than snapshotting every current id: the list
+  // (catalog or live) resolves after mount, and a stored full list would go stale.
   const [allMode, setAllMode] = useState(apiKey.modelScope === null)
   const [selected, setSelected] = useState<Set<string>>(() => new Set(apiKey.modelScope ?? []))
 
@@ -51,6 +111,7 @@ export function EditModelsDialog({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['fallback'] })
       queryClient.invalidateQueries({ queryKey: ['models'] })
+      queryClient.invalidateQueries({ queryKey: ['key-preview-models', apiKey.id] })
       toast.success(t('keys.editModelsSynced'))
     },
     onError: error => toast.error((error as Error).message),
@@ -64,7 +125,11 @@ export function EditModelsDialog({
         body: JSON.stringify({ modelScope }),
       }),
     onSuccess: (_data, modelScope) => {
-      queryClient.invalidateQueries({ queryKey: ['keys'] })
+      // The scope changed: refetch the dashboard chain so the models page shows
+      // exactly what is now enabled, without a manual reload (#user request 2).
+      for (const key of ['keys', 'fallback', 'models']) {
+        queryClient.invalidateQueries({ queryKey: [key] })
+      }
       toast.success(t(
         modelScope === null
           ? 'keys.modelPicker.allSaved'
@@ -132,7 +197,21 @@ export function EditModelsDialog({
           </div>
         )}
 
-        {apiKey.platform !== 'custom' && catalog.length === 0 && (
+        {/* Live-fetch state: a thin strip tells the operator which source they
+            are looking at, and a failed fetch keeps the catalog + shows why. */}
+        {live.isPending && (
+          <p className="mt-3 text-xs text-muted-foreground">{t('keys.editModelsLiveLoading')}</p>
+        )}
+        {useLive && (
+          <p className="mt-3 text-xs text-muted-foreground">{t('keys.editModelsLiveHint')}</p>
+        )}
+        {live.isError && (
+          <p className="mt-3 text-xs text-amber-600 dark:text-amber-400" title={(live.error as Error).message}>
+            {t('keys.editModelsLiveFailed')}
+          </p>
+        )}
+
+        {!useLive && catalog.length === 0 && (
           <p className="mt-4 text-xs text-muted-foreground">{t('common.loading')}</p>
         )}
 
@@ -166,12 +245,26 @@ export function EditModelsDialog({
                   <span className="min-w-0 flex-1 truncate" title={model.modelId}>
                     {model.displayName}
                   </span>
+                  {/* Live price badge — advisory only, never auto-unchecks a
+                      model the operator had already chosen. */}
+                  {model.priceNote && (
+                    <span
+                      className={`shrink-0 max-w-[140px] truncate rounded-full px-1.5 py-0.5 text-[10px] ${
+                        model.isFree
+                          ? 'bg-emerald-600/15 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-400'
+                          : 'bg-muted text-muted-foreground'
+                      }`}
+                      title={model.priceNote}
+                    >
+                      {model.priceNote}
+                    </span>
+                  )}
                   {model.sizeLabel && (
                     <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                       {model.sizeLabel}
                     </span>
                   )}
-                  {model.contextWindow !== null && model.contextWindow > 0 && (
+                  {model.contextWindow != null && model.contextWindow > 0 && (
                     <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground tabular-nums">
                       {t('models.ctxBadge', { size: formatContext(model.contextWindow) })}
                     </span>

@@ -16,7 +16,8 @@
     "modelsMenu": "浏览模型类型",
     "agents": "智能体",
     "logs": "日志",
-    "analyticsMenu": "分析页面"
+    "analyticsMenu": "分析页面",
+    "recentCalls": "最近调用"
   },
   "auth": {
     "createYourAccount": "创建账号",
@@ -293,7 +294,9 @@
     "disableAll": "全部停用",
     "enableAllHint": "启用所有显示的模型，然后保存",
     "disableAllHint": "停用所有显示的模型，然后保存",
-    "enabledOfShown": "显示的 {shown} 个模型中有 {enabled} 个在链中"
+    "enabledOfShown": "显示的 {shown} 个模型中有 {enabled} 个在链中",
+    "deleteModel": "删除模型",
+    "modelDeleted": "模型已删除，可在编辑模型中重新添加。"
   },
   "strategies": {
     "explore": "探索未测模型",
@@ -746,7 +749,12 @@
     "groupHandleCopyFailed": "无法复制到剪贴板",
     "capUsagePercent": "{used} of {cap} ({pct}%)",
     "capWarning80": "Over 80% of this cap — the server logs a budget alert at this point.",
-    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset."
+    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset.",
+    "editModelsLiveLoading": "正在从厂商获取最新模型…",
+    "editModelsLiveHint": "显示厂商实时模型列表，已下架的模型不再出现。",
+    "editModelsLiveFailed": "无法连接厂商，已改用保存的目录。你仍可照常勾选保存。",
+    "discoverFilterPlaceholder": "按名称筛选模型（如 free）",
+    "discoverNoMatch": "没有匹配的模型。"
   },
   "backups": {
     "title": "备份",
@@ -871,7 +879,17 @@
     "sortHint": "排序仅作用于已加载的 {count} 行",
     "cacheHitRate": "缓存命中率",
     "cacheSavedTokens": "已节省 {tokens} 词元",
-    "cacheHitRateHint": "自服务器启动以来命中 {hits} 次、未命中 {misses} 次 · 省下 {requests} 次提供方调用"
+    "cacheHitRateHint": "自服务器启动以来命中 {hits} 次、未命中 {misses} 次 · 省下 {requests} 次提供方调用",
+    "quickViewRequested": "请求模型",
+    "quickViewServedModel": "实际模型",
+    "quickViewCanceled": "已取消",
+    "quickViewFailed": "失败",
+    "quickViewError": "错误",
+    "quickViewDrillHint": "点击任意一行可查看完整的故障转移链路：按顺序尝试过的每个厂商、模型和密钥。",
+    "quickViewHint": "每条请求实际调用了哪个厂商的哪个模型、成功还是失败。打开期间每 5 秒自动刷新。",
+    "quickViewLoaded": "显示 {n} / {total} 条",
+    "quickViewLive": "实时 · 每 5 秒刷新",
+    "quickViewTitle": "最近调用记录"
   },
   "logs": {
     "title": "日志",

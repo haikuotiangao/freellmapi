@@ -130,7 +130,15 @@ export default function FallbackPage() {
     // refetch racing an activation fetched "whichever chain is active by now"
     // into the OLD chain's cache entry, and switching A→B→A then rendered (and
     // could save) B's rows under A's name until a hard refresh.
-    queryFn: () => apiFetch(activeProfileId != null ? `/api/fallback?profile=${activeProfileId}` : '/api/fallback'),
+    // configuredOnly keeps the page to models an enabled key can actually
+    // serve — the operator's "show me only what I've wired up" view. Saved
+    // modelScope edits land in api_keys, so refetching this query after an edit
+    // refreshes the list automatically (see edit-models-dialog invalidation).
+    queryFn: () => {
+      const params = new URLSearchParams({ configuredOnly: '1' })
+      if (activeProfileId != null) params.set('profile', String(activeProfileId))
+      return apiFetch(`/api/fallback?${params}`)
+    },
     enabled: !activePending,
   })
   const isLoading = activePending || entriesLoading
@@ -219,6 +227,22 @@ export default function FallbackPage() {
       pendingTogglesRef.current = Math.max(0, pendingTogglesRef.current - 1)
       if (pendingTogglesRef.current === 0) queryClient.invalidateQueries({ queryKey: ['fallback'] })
     },
+  })
+
+  // Delete every provider row of a logical model. The server records a
+  // tombstone for catalog models so a later catalog sync cannot resurrect it;
+  // the operator can still add it back through the model picker.
+  const deleteMutation = useMutation({
+    mutationFn: (ids: number[]) => Promise.all(ids.map(id =>
+      apiFetch(`/api/models/${id}`, { method: 'DELETE' }),
+    )),
+    onSuccess: () => {
+      for (const key of ['fallback', 'models', 'keys', 'health']) {
+        queryClient.invalidateQueries({ queryKey: [key] })
+      }
+      toast.success(t('models.modelDeleted'))
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
   })
 
   const strategyMutation = useMutation({
@@ -705,7 +729,7 @@ export default function FallbackPage() {
                     <SortableContext items={renderedGroups.map(g => `grp:${g.key}`)} strategy={verticalListSortingStrategy}>
                       <tbody>
                         {renderedGroups.map(g => (
-                          <SortableGroupRow key={g.key} group={g} rank={rankByKey.get(g.key) ?? 0} editableRank onMoveRank={r => handleMoveGroupRank(g.key, r)} onToggleGroup={handleGroupToggle} allRows={rows} rateUsage={rateUsageByModel} />
+                          <SortableGroupRow key={g.key} group={g} rank={rankByKey.get(g.key) ?? 0} editableRank onMoveRank={r => handleMoveGroupRank(g.key, r)} onToggleGroup={handleGroupToggle} onDelete={ids => deleteMutation.mutate(ids)} allRows={rows} rateUsage={rateUsageByModel} />
                         ))}
                       </tbody>
                     </SortableContext>
@@ -723,7 +747,7 @@ export default function FallbackPage() {
                         onClick={() => navigate(`/models/chat/${encodeURIComponent(g.members[0].canonicalId ?? g.members[0].modelId)}`)}
                         className={`group/row border-b last:border-0 cursor-pointer transition-colors hover:[&>td]:bg-muted/50 [&>td:first-child]:rounded-l-lg [&>td:last-child]:rounded-r-lg ${g.members.some(m => m.enabled) ? (isGroupDepleted(g.members, rateUsageByModel) ? 'opacity-60' : '') : 'opacity-50'}`}
                       >
-                        <GroupHeaderCells group={g} rank={rankByKey.get(g.key) ?? 0} onToggleGroup={handleGroupToggle} allRows={rows} rateUsage={rateUsageByModel} />
+                        <GroupHeaderCells group={g} rank={rankByKey.get(g.key) ?? 0} onToggleGroup={handleGroupToggle} onDelete={ids => deleteMutation.mutate(ids)} allRows={rows} rateUsage={rateUsageByModel} />
                       </tr>
                     ))}
                   </tbody>

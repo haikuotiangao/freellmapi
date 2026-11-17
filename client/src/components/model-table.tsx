@@ -4,6 +4,8 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useI18n } from '@/i18n'
 import { CopyButton } from '@/components/copy-button'
+import { ConfirmButton } from '@/components/confirm-button'
+import { Trash2 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip } from '@/components/tooltip'
 import {
@@ -347,7 +349,7 @@ export function RankEditor({ rank, onMoveRank }: { rank: number; onMoveRank: (to
 // The collapsed header row for a logical-model group: name, provider count,
 // union vision/tools badges, the best member's axis bars + score, and a single
 // switch that enables/disables every provider in the group.
-export function GroupHeaderCells({ group, rank, dragHandle, editableRank, onMoveRank, onToggleGroup, allRows, rateUsage }: {
+export function GroupHeaderCells({ group, rank, dragHandle, editableRank, onMoveRank, onToggleGroup, onDelete, allRows, rateUsage }: {
   group: ModelGroupRow
   rank: number
   dragHandle?: ReactNode
@@ -355,6 +357,10 @@ export function GroupHeaderCells({ group, rank, dragHandle, editableRank, onMove
   editableRank?: boolean
   onMoveRank?: (toRank: number) => void
   onToggleGroup: (memberIds: number[], enabled: boolean) => void
+  // When present, a delete button is rendered beside the enable switch. It
+  // deletes every provider row of this logical model (a group is one model
+  // served by several providers), not just the displayed representative.
+  onDelete?: (memberIds: number[]) => void
   // Every configured row, for endpoint disambiguation. Two relays serving one
   // model id land in different display groups the moment one copy is renamed,
   // so the group's own members are not a complete sibling set (#651).
@@ -457,19 +463,35 @@ export function GroupHeaderCells({ group, rank, dragHandle, editableRank, onMove
           </Tooltip>
         )}
       </td>
-      <td className="py-2 pr-3 align-middle text-right" onClick={e => e.stopPropagation()}>
-        <Switch checked={anyEnabled} onCheckedChange={(c) => onToggleGroup(group.members.map(m => m.modelDbId), c)} />
+      <td className="py-2 pr-3 align-middle" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-end gap-1">
+          <Switch checked={anyEnabled} onCheckedChange={(c) => onToggleGroup(group.members.map(m => m.modelDbId), c)} />
+          {onDelete && (
+            <ConfirmButton
+              variant="ghost"
+              size="icon-xs"
+              armedSize="xs"
+              onConfirm={() => onDelete(group.members.map(m => m.modelDbId))}
+              title={t('models.deleteModel')}
+              aria-label={t('models.deleteModel')}
+              className="text-muted-foreground/50 hover:text-destructive"
+            >
+              <Trash2 className="size-3.5" />
+            </ConfirmButton>
+          )}
+        </div>
       </td>
     </>
   )
 }
 
-export function SortableGroupRow({ group, rank, editableRank, onMoveRank, onToggleGroup, allRows, rateUsage }: {
+export function SortableGroupRow({ group, rank, editableRank, onMoveRank, onToggleGroup, onDelete, allRows, rateUsage }: {
   group: ModelGroupRow
   rank: number
   editableRank?: boolean
   onMoveRank?: (toRank: number) => void
   onToggleGroup: (memberIds: number[], enabled: boolean) => void
+  onDelete?: (memberIds: number[]) => void
   allRows?: readonly Row[]
   rateUsage?: ReadonlyMap<number, RateLimitUsageRow>
 }) {
@@ -499,7 +521,7 @@ export function SortableGroupRow({ group, rank, editableRank, onMoveRank, onTogg
       onClick={() => navigate(`/models/chat/${detailId}`)}
       className={`group/row border-b last:border-0 bg-card cursor-pointer transition-colors hover:[&>td]:bg-muted/50 [&>td:first-child]:rounded-l-lg [&>td:last-child]:rounded-r-lg ${isDragging ? 'opacity-50' : ''} ${anyEnabled ? (depleted ? 'opacity-60' : '') : 'opacity-50'}`}
     >
-      <GroupHeaderCells group={group} rank={rank} dragHandle={handle} editableRank={editableRank} onMoveRank={onMoveRank} onToggleGroup={onToggleGroup} allRows={allRows} rateUsage={rateUsage} />
+      <GroupHeaderCells group={group} rank={rank} dragHandle={handle} editableRank={editableRank} onMoveRank={onMoveRank} onToggleGroup={onToggleGroup} onDelete={onDelete} allRows={allRows} rateUsage={rateUsage} />
     </tr>
   )
 }

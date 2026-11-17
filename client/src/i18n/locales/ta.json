@@ -16,7 +16,8 @@
     "modelsMenu": "மாதிரி வகைகளை உலாவவும்",
     "agents": "முகவர்கள்",
     "logs": "பதிவுகள்",
-    "analyticsMenu": "பகுப்பாய்வு பக்கங்கள்"
+    "analyticsMenu": "பகுப்பாய்வு பக்கங்கள்",
+    "recentCalls": "Recent calls"
   },
   "auth": {
     "createYourAccount": "உங்கள் கணக்கை உருவாக்கவும்",
@@ -293,7 +294,9 @@
     "disableAll": "Disable all",
     "enableAllHint": "Turn on every model shown, then Save",
     "disableAllHint": "Turn off every model shown, then Save",
-    "enabledOfShown": "{enabled} of {shown} shown models are in the chain"
+    "enabledOfShown": "{enabled} of {shown} shown models are in the chain",
+    "deleteModel": "Delete model",
+    "modelDeleted": "Model deleted. You can add it back from the model picker."
   },
   "strategies": {
     "explore": "அளவிடப்படாத மாதிரிகளை ஆராயுங்கள்",
@@ -743,7 +746,12 @@
     "groupHandleCopyFailed": "Couldn't copy to the clipboard",
     "capUsagePercent": "{used} of {cap} ({pct}%)",
     "capWarning80": "Over 80% of this cap — the server logs a budget alert at this point.",
-    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset."
+    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset.",
+    "editModelsLiveLoading": "Fetching the latest models from the provider…",
+    "editModelsLiveHint": "Showing the provider's live model list. Retired models are gone.",
+    "editModelsLiveFailed": "Could not reach the provider — showing the saved catalog instead. You can still save your selection.",
+    "discoverFilterPlaceholder": "Filter models by name (e.g. free)",
+    "discoverNoMatch": "No models match this filter."
   },
   "backups": {
     "title": "Backups",
@@ -868,7 +876,17 @@
     "sortHint": "வரிசைப்படுத்தல் ஏற்றப்பட்ட {count} வரிசைகளுக்கு மட்டுமே பொருந்தும்",
     "cacheHitRate": "தற்காலிக சேமிப்பு வெற்றி விகிதம்",
     "cacheSavedTokens": "{tokens} டோக்கன்கள் சேமிக்கப்பட்டன",
-    "cacheHitRateHint": "சேவையகம் தொடங்கியதிலிருந்து {hits} வெற்றி, {misses} தோல்வி · {requests} வழங்குநர் அழைப்புகள் தவிர்க்கப்பட்டன"
+    "cacheHitRateHint": "சேவையகம் தொடங்கியதிலிருந்து {hits} வெற்றி, {misses} தோல்வி · {requests} வழங்குநர் அழைப்புகள் தவிர்க்கப்பட்டன",
+    "quickViewRequested": "Requested model",
+    "quickViewServedModel": "Served model",
+    "quickViewCanceled": "canceled",
+    "quickViewFailed": "failed",
+    "quickViewError": "Error",
+    "quickViewDrillHint": "Click any row to see the full failover ladder: every provider, model and key tried, in order.",
+    "quickViewHint": "Which concrete provider and model served each request, and whether it succeeded. Refreshes every 5 seconds while open.",
+    "quickViewLoaded": "Showing {n} of {total}",
+    "quickViewLive": "Live - refreshes every 5 s",
+    "quickViewTitle": "Recent calls"
   },
   "logs": {
     "title": "பதிவுகள்",

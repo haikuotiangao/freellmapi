@@ -181,6 +181,18 @@ const MODEL_JOINS = `
 // a hand-built ("start empty") chain usable at all: it renders as "the catalog,
 // nothing turned on yet" instead of an empty page, and turning a row on is the
 // PUT below, which writes the row into the chain. Nothing is persisted by GET.
+// `configuredOnly` narrows the catalog to models the operator can actually
+// call: one bound to an enabled key, or whose platform has an enabled key.
+// This is the same rule the router uses to decide whether a model has a key
+// behind it, so the dashboard stops showing hundreds of catalog rows no key
+// can serve. It is opt-in via ?configuredOnly=1 so existing callers (and the
+// route's own tests) keep the full catalog by default.
+const CONFIGURED_SQL = `
+      AND (
+        m.key_id IN (SELECT id FROM api_keys WHERE enabled = 1)
+        OR (m.key_id IS NULL AND m.platform IN (SELECT platform FROM api_keys WHERE enabled = 1))
+      )`;
+
 const PROFILE_CHAIN_SQL = `
     SELECT m.id AS model_db_id, pm.priority AS chain_priority, pm.enabled AS chain_enabled,
            fc.priority AS catalog_priority,
@@ -190,6 +202,7 @@ ${MODEL_COLUMNS}
     LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
 ${MODEL_JOINS}
     WHERE m.enabled = 1
+    __CONFIGURED__
 `;
 
 const GLOBAL_CHAIN_SQL = `
@@ -199,6 +212,7 @@ ${MODEL_COLUMNS}
     JOIN models m ON m.id = fc.model_db_id
 ${MODEL_JOINS}
     WHERE m.enabled = 1
+    __CONFIGURED__
     ORDER BY fc.priority ASC
 `;
 
@@ -248,9 +262,11 @@ fallbackRouter.get('/', (req: Request, res: Response) => {
   // all. Once one is active it is authoritative even when it is empty — falling
   // through to the global table there is what made two different empty chains
   // show (and save) the same configuration (#1021).
+  const configuredOnly = req.query.configuredOnly === '1';
+  const configured = configuredOnly ? CONFIGURED_SQL : '';
   const rows = activeProfileId != null
-    ? orderProfileRows(db.prepare(PROFILE_CHAIN_SQL).all(activeProfileId) as any[])
-    : db.prepare(GLOBAL_CHAIN_SQL).all() as any[];
+    ? orderProfileRows(db.prepare(PROFILE_CHAIN_SQL.replace('__CONFIGURED__', configured)).all(activeProfileId) as any[])
+    : db.prepare(GLOBAL_CHAIN_SQL.replace('__CONFIGURED__', configured)).all() as any[];
 
   // Count usable keys per platform — enabled AND healthy/unknown status. Unified
   // with /token-usage and the routing scorer (#456) so budget pooling is computed

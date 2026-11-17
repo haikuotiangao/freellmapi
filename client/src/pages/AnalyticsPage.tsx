@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -261,7 +262,7 @@ interface RecentErrorRow {
   createdAt: string
 }
 
-interface RecentCallRow {
+export interface RecentCallRow {
   id: number
   platform: string
   modelId: string
@@ -284,7 +285,7 @@ interface RecentCallRow {
   attemptCount: number
 }
 
-interface RecentCallsResponse {
+export interface RecentCallsResponse {
   total: number
   rows: RecentCallRow[]
 }
@@ -641,6 +642,15 @@ export default function AnalyticsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [platformFilter, setPlatformFilter] = useState<string>('all')
   const [detailId, setDetailId] = useState<number | null>(null)
+
+  // The top-bar "Recent calls" dialog hands the tapped request id over as
+  // ?request=<id> so its failover ladder opens straight away. Reading it as an
+  // effect (not derived state) keeps the detail dialog independently closable.
+  const [searchParams] = useSearchParams()
+  useEffect(() => {
+    const id = searchParams.get('request')
+    if (id) setDetailId(Number(id))
+  }, [searchParams])
 
   const { data: recentCalls } = useQuery({
     queryKey: ['analytics', 'requests', range, statusFilter, platformFilter],

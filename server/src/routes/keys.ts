@@ -1170,6 +1170,74 @@ keysRouter.post('/custom/discover-models', async (req: Request, res: Response) =
   }
 });
 
+// ── Live model list for the model editor ───────────────────────────────────
+// The model editor needs the provider's CURRENT /models, not the signed
+// catalog's (free tier) monthly snapshot — a provider that retired a model
+// must not keep offering it in the picker. Unlike #1348 discovery this is a
+// READ-ONLY preview: it asks any OpenAI-compatible provider, including ones
+// the catalog manages, and never writes a row. It answers with a uniform
+// shape so the editor can swap between built-in and custom keys transparently.
+// Price badges are advisory; the editor keeps the operator's saved scope.
+keysRouter.post('/preview-models', async (req: Request, res: Response) => {
+  const parsed = z.object({ keyId: z.number().int().positive() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: 'keyId is required' } });
+    return;
+  }
+  const db = getDb();
+  const key = db.prepare(
+    'SELECT id, platform, base_url, encrypted_key, iv, auth_tag, proxy_encrypted, proxy_iv, proxy_auth_tag FROM api_keys WHERE id = ?',
+  ).get(parsed.data.keyId) as BuiltinKeyRow & { base_url: string | null } | undefined;
+  if (!key) {
+    res.status(404).json({ error: { message: 'no such key' } });
+    return;
+  }
+
+  try {
+    let discovered: Awaited<ReturnType<typeof discoverEndpointModels>>;
+    if (key.platform === 'custom') {
+      if (!key.base_url) {
+        res.status(400).json({ error: { message: 'endpoint has no base URL' } });
+        return;
+      }
+      let storedKey = 'no-key';
+      try { storedKey = decrypt(key.encrypted_key, key.iv, key.auth_tag) || 'no-key'; } catch { /* keep sentinel */ }
+      discovered = await discoverEndpointModels(key.base_url, storedKey);
+    } else {
+      const provider = resolveProvider(key.platform as Platform);
+      if (!(provider instanceof OpenAICompatProvider)) {
+        res.status(400).json({ error: { message: `${key.platform} has no live model list` } });
+        return;
+      }
+      discovered = await discoverBuiltinModels(provider, key);
+    }
+
+    // Which of these are already in the saved scope: those rows are shown
+    // checked-and-locked in the editor, the same as registered rows elsewhere.
+    const scope = parseModelScope(
+      (db.prepare('SELECT model_scope_json FROM api_keys WHERE id = ?').get(key.id) as { model_scope_json: string | null } | undefined)?.model_scope_json ?? null,
+    );
+    const inScope = (id: string) => scope === null || scope.has(id);
+    const models = discovered.map(m => ({
+      id: m.id,
+      ownedBy: m.ownedBy,
+      contextWindow: m.contextWindow,
+      priceNote: m.priceNote,
+      isFree: m.isFree,
+      vision: m.vision,
+      kind: m.kind,
+      registered: inScope(m.id),
+    }));
+    res.json({ keyId: key.id, platform: key.platform, models, total: models.length });
+  } catch (err: any) {
+    if (err instanceof ModelDiscoveryError) {
+      res.status(err.status).json({ error: { message: err.message, type: 'upstream_error' } });
+      return;
+    }
+    res.status(502).json({ error: { message: `Model discovery failed: ${err?.message ?? 'unknown error'}` } });
+  }
+});
+
 // ── Built-in provider discovery (#1348) ─────────────────────────────────────
 // The same Fetch models flow as a custom endpoint, for built-in platforms the
 // catalog carries no models for (see services/builtin-model-discovery.ts for

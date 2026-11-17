@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogPopup, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 import { toast } from '@/lib/toast'
 import { formatContext } from '@/lib/routing'
@@ -73,6 +74,10 @@ export function DiscoverModelsDialog({
   // and disabled without living here, so the list reads as "what this endpoint
   // will serve" while the Add button still counts only what is genuinely new.
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // Text filter over the model id. Typing "free" narrows to ids containing
+  // that substring — the operator's fastest way to sweep a relay's catalog
+  // for free-tier models without scrolling hundreds of rows.
+  const [filter, setFilter] = useState('')
 
   // A query, not a mutation: the dialog is mounted only while open, so the
   // fetch fires on mount and the component needs no reset effect.
@@ -86,7 +91,12 @@ export function DiscoverModelsDialog({
     gcTime: 0,
     staleTime: 0,
   })
-  const models = discover.data?.models ?? []
+  const allModels = discover.data?.models ?? []
+  const needle = filter.trim().toLowerCase()
+  const models = useMemo(
+    () => needle ? allModels.filter(m => m.id.toLowerCase().includes(needle)) : allModels,
+    [allModels, needle],
+  )
 
   const register = useMutation<{ created: number }>({
     meta: { silenceToast: true },
@@ -105,7 +115,7 @@ export function DiscoverModelsDialog({
           // registers generic-id media/embedding models in the right table
           // instead of re-classifying by id and dropping them to chat.
           models: [...selected].map(id => {
-            const discovered = models.find(m => m.id === id)
+            const discovered = allModels.find(m => m.id === id)
             return discovered?.kind ? { model: id, kind: discovered.kind } : id
           }),
         }),
@@ -160,12 +170,27 @@ export function DiscoverModelsDialog({
           <p className="mt-4 text-xs text-destructive">{(discover.error as Error).message}</p>
         )}
 
-        {discover.isSuccess && models.length === 0 && (
+        {discover.isSuccess && allModels.length === 0 && (
           <p className="mt-4 text-xs text-muted-foreground">{t('keys.discoverEmpty')}</p>
         )}
 
-        {models.length > 0 && (
+        {allModels.length > 0 && (
           <>
+            {/* Substring filter: "free" → every id containing "free". */}
+            <Input
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              placeholder={t('keys.discoverFilterPlaceholder')}
+              aria-label={t('keys.discoverFilterPlaceholder')}
+              className="mt-4 h-8 text-xs"
+            />
+
+            {discover.isSuccess && models.length === 0 && (
+              <p className="mt-3 text-xs text-muted-foreground">{t('keys.discoverNoMatch')}</p>
+            )}
+
+            {models.length > 0 && (
+            <>
             <label className="mt-4 flex items-center gap-2 text-xs font-medium">
               <input
                 type="checkbox"
@@ -232,6 +257,8 @@ export function DiscoverModelsDialog({
                 </label>
               ))}
             </div>
+            </>
+            )}
           </>
         )}
 

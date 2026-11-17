@@ -16,7 +16,8 @@
     "modelsMenu": "Explorar tipos de modelo",
     "agents": "Agentes",
     "logs": "Logs",
-    "analyticsMenu": "Páginas de análises"
+    "analyticsMenu": "Páginas de análises",
+    "recentCalls": "Recent calls"
   },
   "auth": {
     "createYourAccount": "Crie sua conta",
@@ -293,7 +294,9 @@
     "disableAll": "Desativar todos",
     "enableAllHint": "Ative todos os modelos exibidos e salve",
     "disableAllHint": "Desative todos os modelos exibidos e salve",
-    "enabledOfShown": "{enabled} de {shown} modelos exibidos estão na cadeia"
+    "enabledOfShown": "{enabled} de {shown} modelos exibidos estão na cadeia",
+    "deleteModel": "Delete model",
+    "modelDeleted": "Model deleted. You can add it back from the model picker."
   },
   "strategies": {
     "explore": "Explorar modelos sem medições",
@@ -743,7 +746,12 @@
     "groupHandleCopyFailed": "Couldn't copy to the clipboard",
     "capUsagePercent": "{used} of {cap} ({pct}%)",
     "capWarning80": "Over 80% of this cap — the server logs a budget alert at this point.",
-    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset."
+    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset.",
+    "editModelsLiveLoading": "Fetching the latest models from the provider…",
+    "editModelsLiveHint": "Showing the provider's live model list. Retired models are gone.",
+    "editModelsLiveFailed": "Could not reach the provider — showing the saved catalog instead. You can still save your selection.",
+    "discoverFilterPlaceholder": "Filter models by name (e.g. free)",
+    "discoverNoMatch": "No models match this filter."
   },
   "backups": {
     "title": "Backups",
@@ -868,7 +876,17 @@
     "sortHint": "A ordenação se aplica às {count} linhas carregadas",
     "cacheHitRate": "Taxa de acerto do cache",
     "cacheSavedTokens": "{tokens} tokens economizados",
-    "cacheHitRateHint": "{hits} acertos contra {misses} erros desde o início do servidor · {requests} chamadas ao provedor evitadas"
+    "cacheHitRateHint": "{hits} acertos contra {misses} erros desde o início do servidor · {requests} chamadas ao provedor evitadas",
+    "quickViewRequested": "Requested model",
+    "quickViewServedModel": "Served model",
+    "quickViewCanceled": "canceled",
+    "quickViewFailed": "failed",
+    "quickViewError": "Error",
+    "quickViewDrillHint": "Click any row to see the full failover ladder: every provider, model and key tried, in order.",
+    "quickViewHint": "Which concrete provider and model served each request, and whether it succeeded. Refreshes every 5 seconds while open.",
+    "quickViewLoaded": "Showing {n} of {total}",
+    "quickViewLive": "Live - refreshes every 5 s",
+    "quickViewTitle": "Recent calls"
   },
   "logs": {
     "title": "Logs",

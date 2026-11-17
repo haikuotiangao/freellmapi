@@ -16,7 +16,8 @@
     "modelsMenu": "Parcourir les types de modèles",
     "agents": "Agents",
     "logs": "Journaux",
-    "analyticsMenu": "Pages d'analytique"
+    "analyticsMenu": "Pages d'analytique",
+    "recentCalls": "Recent calls"
   },
   "auth": {
     "createYourAccount": "Créez votre compte",
@@ -293,7 +294,9 @@
     "disableAll": "Tout désactiver",
     "enableAllHint": "Activer tous les modèles affichés, puis enregistrer",
     "disableAllHint": "Désactiver tous les modèles affichés, puis enregistrer",
-    "enabledOfShown": "{enabled} des {shown} modèles affichés sont dans la chaîne"
+    "enabledOfShown": "{enabled} des {shown} modèles affichés sont dans la chaîne",
+    "deleteModel": "Delete model",
+    "modelDeleted": "Model deleted. You can add it back from the model picker."
   },
   "strategies": {
     "explore": "Explorer les modèles non mesurés",
@@ -743,7 +746,12 @@
     "groupHandleCopyFailed": "Couldn't copy to the clipboard",
     "capUsagePercent": "{used} of {cap} ({pct}%)",
     "capWarning80": "Over 80% of this cap — the server logs a budget alert at this point.",
-    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset."
+    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset.",
+    "editModelsLiveLoading": "Fetching the latest models from the provider…",
+    "editModelsLiveHint": "Showing the provider's live model list. Retired models are gone.",
+    "editModelsLiveFailed": "Could not reach the provider — showing the saved catalog instead. You can still save your selection.",
+    "discoverFilterPlaceholder": "Filter models by name (e.g. free)",
+    "discoverNoMatch": "No models match this filter."
   },
   "backups": {
     "title": "Sauvegardes",
@@ -868,7 +876,17 @@
     "sortHint": "Le tri s'applique aux {count} lignes chargées",
     "cacheHitRate": "Taux de succès du cache",
     "cacheSavedTokens": "{tokens} jetons économisés",
-    "cacheHitRateHint": "{hits} succès contre {misses} échecs depuis le démarrage du serveur · {requests} appels au fournisseur évités"
+    "cacheHitRateHint": "{hits} succès contre {misses} échecs depuis le démarrage du serveur · {requests} appels au fournisseur évités",
+    "quickViewRequested": "Requested model",
+    "quickViewServedModel": "Served model",
+    "quickViewCanceled": "canceled",
+    "quickViewFailed": "failed",
+    "quickViewError": "Error",
+    "quickViewDrillHint": "Click any row to see the full failover ladder: every provider, model and key tried, in order.",
+    "quickViewHint": "Which concrete provider and model served each request, and whether it succeeded. Refreshes every 5 seconds while open.",
+    "quickViewLoaded": "Showing {n} of {total}",
+    "quickViewLive": "Live - refreshes every 5 s",
+    "quickViewTitle": "Recent calls"
   },
   "logs": {
     "title": "Journaux",

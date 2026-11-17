@@ -16,7 +16,8 @@
     "modelsMenu": "Telusuri jenis model",
     "agents": "Agen",
     "logs": "Log",
-    "analyticsMenu": "Halaman analisis"
+    "analyticsMenu": "Halaman analisis",
+    "recentCalls": "Recent calls"
   },
   "auth": {
     "createYourAccount": "Buat akun Anda",
@@ -293,7 +294,9 @@
     "disableAll": "Nonaktifkan semua",
     "enableAllHint": "Aktifkan semua model yang tampil, lalu simpan",
     "disableAllHint": "Nonaktifkan semua model yang tampil, lalu simpan",
-    "enabledOfShown": "{enabled} dari {shown} model yang tampil ada di rantai"
+    "enabledOfShown": "{enabled} dari {shown} model yang tampil ada di rantai",
+    "deleteModel": "Delete model",
+    "modelDeleted": "Model deleted. You can add it back from the model picker."
   },
   "strategies": {
     "explore": "Jelajahi model yang belum terukur",
@@ -743,7 +746,12 @@
     "groupHandleCopyFailed": "Couldn't copy to the clipboard",
     "capUsagePercent": "{used} of {cap} ({pct}%)",
     "capWarning80": "Over 80% of this cap — the server logs a budget alert at this point.",
-    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset."
+    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset.",
+    "editModelsLiveLoading": "Fetching the latest models from the provider…",
+    "editModelsLiveHint": "Showing the provider's live model list. Retired models are gone.",
+    "editModelsLiveFailed": "Could not reach the provider — showing the saved catalog instead. You can still save your selection.",
+    "discoverFilterPlaceholder": "Filter models by name (e.g. free)",
+    "discoverNoMatch": "No models match this filter."
   },
   "backups": {
     "title": "Backups",
@@ -868,7 +876,17 @@
     "sortHint": "Pengurutan berlaku untuk {count} baris yang dimuat",
     "cacheHitRate": "Rasio hit cache",
     "cacheSavedTokens": "{tokens} token dihemat",
-    "cacheHitRateHint": "{hits} hit vs {misses} miss sejak server dijalankan · {requests} panggilan penyedia dihindari"
+    "cacheHitRateHint": "{hits} hit vs {misses} miss sejak server dijalankan · {requests} panggilan penyedia dihindari",
+    "quickViewRequested": "Requested model",
+    "quickViewServedModel": "Served model",
+    "quickViewCanceled": "canceled",
+    "quickViewFailed": "failed",
+    "quickViewError": "Error",
+    "quickViewDrillHint": "Click any row to see the full failover ladder: every provider, model and key tried, in order.",
+    "quickViewHint": "Which concrete provider and model served each request, and whether it succeeded. Refreshes every 5 seconds while open.",
+    "quickViewLoaded": "Showing {n} of {total}",
+    "quickViewLive": "Live - refreshes every 5 s",
+    "quickViewTitle": "Recent calls"
   },
   "logs": {
     "title": "Log",

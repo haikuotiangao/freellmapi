@@ -16,7 +16,8 @@
     "modelsMenu": "मॉडल प्रकार ब्राउज़ करें",
     "agents": "एजेंट",
     "logs": "लॉग",
-    "analyticsMenu": "विश्लेषिकी पेज"
+    "analyticsMenu": "विश्लेषिकी पेज",
+    "recentCalls": "Recent calls"
   },
   "auth": {
     "createYourAccount": "अपना खाता बनाएं",
@@ -293,7 +294,9 @@
     "disableAll": "सभी बंद करें",
     "enableAllHint": "दिखाए गए सभी मॉडल चालू करें, फिर सहेजें",
     "disableAllHint": "दिखाए गए सभी मॉडल बंद करें, फिर सहेजें",
-    "enabledOfShown": "दिखाए गए {shown} में से {enabled} मॉडल चेन में हैं"
+    "enabledOfShown": "दिखाए गए {shown} में से {enabled} मॉडल चेन में हैं",
+    "deleteModel": "Delete model",
+    "modelDeleted": "Model deleted. You can add it back from the model picker."
   },
   "strategies": {
     "explore": "बिना मापे गए मॉडल एक्सप्लोर करें",
@@ -743,7 +746,12 @@
     "groupHandleCopyFailed": "Couldn't copy to the clipboard",
     "capUsagePercent": "{used} of {cap} ({pct}%)",
     "capWarning80": "Over 80% of this cap — the server logs a budget alert at this point.",
-    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset."
+    "capExhaustedWarning": "Cap reached — new requests are rejected until the monthly reset.",
+    "editModelsLiveLoading": "Fetching the latest models from the provider…",
+    "editModelsLiveHint": "Showing the provider's live model list. Retired models are gone.",
+    "editModelsLiveFailed": "Could not reach the provider — showing the saved catalog instead. You can still save your selection.",
+    "discoverFilterPlaceholder": "Filter models by name (e.g. free)",
+    "discoverNoMatch": "No models match this filter."
   },
   "backups": {
     "title": "Backups",
@@ -868,7 +876,17 @@
     "sortHint": "क्रमबद्धता केवल लोड की गई {count} पंक्तियों पर लागू होती है",
     "cacheHitRate": "कैश हिट दर",
     "cacheSavedTokens": "{tokens} टोकन बचे",
-    "cacheHitRateHint": "सर्वर शुरू होने के बाद से {hits} हिट बनाम {misses} मिस · {requests} प्रदाता कॉल बचाए गए"
+    "cacheHitRateHint": "सर्वर शुरू होने के बाद से {hits} हिट बनाम {misses} मिस · {requests} प्रदाता कॉल बचाए गए",
+    "quickViewRequested": "Requested model",
+    "quickViewServedModel": "Served model",
+    "quickViewCanceled": "canceled",
+    "quickViewFailed": "failed",
+    "quickViewError": "Error",
+    "quickViewDrillHint": "Click any row to see the full failover ladder: every provider, model and key tried, in order.",
+    "quickViewHint": "Which concrete provider and model served each request, and whether it succeeded. Refreshes every 5 seconds while open.",
+    "quickViewLoaded": "Showing {n} of {total}",
+    "quickViewLive": "Live - refreshes every 5 s",
+    "quickViewTitle": "Recent calls"
   },
   "logs": {
     "title": "लॉग",

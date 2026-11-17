@@ -33,7 +33,7 @@ import {
 } from '../services/builtin-model-discovery.js';
 import type { Db } from '../db/types.js';
 import type { Platform } from '@freellmapi/shared/types.js';
-import { parseModelScope } from '../lib/model-scope.js';
+import { parseModelScope, extendKeyScope } from '../lib/model-scope.js';
 import { KEY_PROXY_URL_ERROR, KEY_PROXY_URL_MAX, decryptProxyUrl, encryptProxyUrl, isValidKeyProxyUrl, maskProxyUrl } from '../lib/key-proxy.js';
 import { isLoopbackRequest } from '../lib/loopback.js';
 
@@ -1323,6 +1323,9 @@ keysRouter.post('/discovered-models', (req: Request, res: Response) => {
   const nonChat = ids.filter(id => classifyModelId(id) !== undefined);
   const chat = ids.filter(id => classifyModelId(id) === undefined);
   const result = registerDiscoveredModels(db, key.platform, chat.map(modelId => ({ modelId })), { explicit: true });
+  // A picked model joins a SCOPED key's scope, so it is servable and shows up
+  // on the dashboard. An unscoped key (NULL) serves everything already.
+  extendKeyScope(db, key.id, result.created);
   res.json({
     platform: key.platform,
     created: result.created.length,
@@ -1553,6 +1556,11 @@ keysRouter.post('/custom', async (req: Request, res: Response) => {
   const { keyId, storedKey, registered } = registerCustomModels(
     db, baseUrl, providedKey, label, endpoint.keyId ?? undefined, pureChatEntries,
   );
+  // The operator picked these models for this key, so a SCOPED key must learn
+  // about them: outside its scope the router would skip them and the
+  // dashboard would not list them — the opposite of the pick. An unscoped key
+  // (NULL) already serves them all.
+  extendKeyScope(db, keyId, registered.map(r => r.model));
   if (parsed.data.groupLabel !== undefined) setCustomEndpointGroup(db, keyId, normalizeGroupLabel(parsed.data.groupLabel));
 
   const mediaRegistered: Array<{ modelDbId: number; model: string; modality: string; created: boolean }> = [];

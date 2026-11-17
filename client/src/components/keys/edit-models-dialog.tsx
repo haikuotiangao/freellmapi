@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogPopup, DialogTitle } from '@/components/ui/dialog'
@@ -56,6 +56,11 @@ export function EditModelsDialog({
 
   // Live list from the provider itself, read-only. The dialog is mounted only
   // while open, so this fires on open and needs no reset effect.
+  //
+  // The cache is KEPT (no `gcTime: 0`): dropping it the moment the dialog
+  // closed made every re-open start from an empty list, so the picker
+  // "flashed" (the old rows) and was gone. With the cache, a re-open shows the
+  // previous list at once and the fresh one replaces it.
   const live = useQuery<LivePreview>({
     queryKey: ['key-preview-models', apiKey.id],
     queryFn: () => apiFetch('/api/keys/preview-models', {
@@ -63,7 +68,6 @@ export function EditModelsDialog({
       body: JSON.stringify({ keyId: apiKey.id }),
     }),
     retry: false,
-    gcTime: 0,
     staleTime: 0,
   })
 
@@ -86,10 +90,20 @@ export function EditModelsDialog({
   // Live wins when it answered with a non-empty list. An empty live list means
   // "provider currently serves nothing" — rare, and refusing to fall back
   // would blank the picker, so treat it like a failure and keep the catalog.
+  //
+  // Once a live list has loaded it STAYS on screen: a later failed refetch must
+  // not collapse the picker back to the static catalog, because the operator
+  // would watch the models they just ticked disappear. The failure is reported
+  // as a hint instead.
   const liveModels = live.data?.models ?? []
-  const useLive = !live.isPending && !live.isError && liveModels.length > 0
+  const lastLive = useRef<LiveDiscoveredModel[]>([])
+  useEffect(() => {
+    if (liveModels.length > 0) lastLive.current = liveModels
+  }, [liveModels])
+  const shownLive = liveModels.length > 0 ? liveModels : lastLive.current
+  const useLive = shownLive.length > 0
   const candidates: Candidate[] = useLive
-    ? liveModels.map(m => ({
+    ? shownLive.map(m => ({
         modelId: m.id,
         displayName: m.id,
         sizeLabel: null,
@@ -98,6 +112,10 @@ export function EditModelsDialog({
         isFree: m.isFree,
       }))
     : catalogCandidates
+  // The very first live fetch: show the loading line instead of the static
+  // catalog, so the list appears ONCE (with the provider's own models)
+  // instead of swapping a different list under the operator's cursor.
+  const livePending = live.isPending && !useLive
 
   const allIds = candidates.map(m => m.modelId)
   // Keep "all" as a mode rather than snapshotting every current id: the list
@@ -199,10 +217,10 @@ export function EditModelsDialog({
 
         {/* Live-fetch state: a thin strip tells the operator which source they
             are looking at, and a failed fetch keeps the catalog + shows why. */}
-        {live.isPending && (
+        {livePending && (
           <p className="mt-3 text-xs text-muted-foreground">{t('keys.editModelsLiveLoading')}</p>
         )}
-        {useLive && (
+        {useLive && !live.isError && (
           <p className="mt-3 text-xs text-muted-foreground">{t('keys.editModelsLiveHint')}</p>
         )}
         {live.isError && (
@@ -211,11 +229,11 @@ export function EditModelsDialog({
           </p>
         )}
 
-        {!useLive && catalog.length === 0 && (
+        {!livePending && !useLive && catalog.length === 0 && (
           <p className="mt-4 text-xs text-muted-foreground">{t('common.loading')}</p>
         )}
 
-        {candidates.length > 0 && (
+        {!livePending && candidates.length > 0 && (
           <>
             <label className="mt-4 flex items-center gap-2 text-xs font-medium">
               <input

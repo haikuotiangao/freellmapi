@@ -16,7 +16,8 @@ import { getCooldownCeilingMs, setCooldownCeilingMs, MIN_COOLDOWN_CEILING_MS, MA
 import { getActiveProfileId } from '../services/profile-models.js';
 import { qualifiedModelMemberId } from '../lib/endpoint-scope.js';
 import { overriddenFieldNames } from '../services/model-state.js';
-import { parseModelScope, scopeAllows } from '../lib/model-scope.js';
+import { parseModelScope, scopeAllows, enabledKeyScopes, servableByScope } from '../lib/model-scope.js';
+import { endpointScopeForBaseUrl } from '../lib/endpoint-scope.js';
 import { getQuotaOutlook } from '../services/quota-outlook.js';
 import { getDecisionRoutingStatus, setDecisionRoutingSettings } from '../services/routing-decision.js';
 
@@ -181,17 +182,57 @@ const MODEL_JOINS = `
 // a hand-built ("start empty") chain usable at all: it renders as "the catalog,
 // nothing turned on yet" instead of an empty page, and turning a row on is the
 // PUT below, which writes the row into the chain. Nothing is persisted by GET.
-// `configuredOnly` narrows the catalog to models the operator can actually
-// call: one bound to an enabled key, or whose platform has an enabled key.
-// This is the same rule the router uses to decide whether a model has a key
-// behind it, so the dashboard stops showing hundreds of catalog rows no key
-// can serve. It is opt-in via ?configuredOnly=1 so existing callers (and the
-// route's own tests) keep the full catalog by default.
-const CONFIGURED_SQL = `
+// `configuredOnly` narrows the catalog to the models an ENABLED key can
+// actually serve. Two rules stack, and the second one is what the operator
+// actually means by "I ticked this model":
+//
+//  1. Reachability — the model is bound to an enabled key, belongs to a custom
+//     endpoint that has an enabled key, or sits on a platform an enabled key
+//     serves. This is the same rule the router uses to decide whether a model
+//     has a key behind it, so the dashboard stops showing hundreds of catalog
+//     rows no key can serve.
+//  2. Scope — the model must be inside that key's model scope. A scope is a
+//     HARD routing restriction (the router skips a key whose scope does not
+//     list the model), so a model outside every enabled key's scope can never
+//     answer. Listing it would offer a model the router will never pick, and
+//     it is exactly what "the models I ticked" means in the dashboard: what
+//     "Fetch models" registered and what "Edit models" ticked.
+//
+// A NULL scope means "unscoped" — that key serves every model of its platform,
+// which is what "select all" in the picker stores.
+//
+// The SQL below is the reachability half (cheap, index-friendly); the scope
+// half is applied to the rows it returns. It is opt-in via ?configuredOnly=1
+// so existing callers (and the route's own tests) keep the full catalog by
+// default.
+type EnabledKeyRow = {
+  id: number;
+  platform: string;
+  base_url: string | null;
+  model_scope_json: string | null;
+};
+
+/** Reachability filter for the rows an enabled key can reach. */
+function configuredSql(enabled: EnabledKeyRow[]): { sql: string; params: (string | number)[] } {
+  const keyIds = enabled.map(k => k.id);
+  const platforms = [...new Set(enabled.map(k => k.platform))];
+  const endpointScopes = [...new Set(
+    enabled
+      .filter(k => k.platform === 'custom')
+      .map(k => endpointScopeForBaseUrl(k.base_url)),
+  )];
+  const list = (values: (string | number)[]): string =>
+    values.length > 0 ? values.map(() => '?').join(', ') : 'NULL';
+  return {
+    sql: `
       AND (
-        m.key_id IN (SELECT id FROM api_keys WHERE enabled = 1)
-        OR (m.key_id IS NULL AND m.platform IN (SELECT platform FROM api_keys WHERE enabled = 1))
-      )`;
+        m.key_id IN (${list(keyIds)})
+        OR (m.key_id IS NULL AND m.platform IN (${list(platforms)}))
+        OR (m.platform = 'custom' AND m.endpoint_scope IN (${list(endpointScopes)}))
+      )`,
+    params: [...keyIds, ...platforms, ...endpointScopes],
+  };
+}
 
 const PROFILE_CHAIN_SQL = `
     SELECT m.id AS model_db_id, pm.priority AS chain_priority, pm.enabled AS chain_enabled,
@@ -263,10 +304,40 @@ fallbackRouter.get('/', (req: Request, res: Response) => {
   // through to the global table there is what made two different empty chains
   // show (and save) the same configuration (#1021).
   const configuredOnly = req.query.configuredOnly === '1';
-  const configured = configuredOnly ? CONFIGURED_SQL : '';
-  const rows = activeProfileId != null
-    ? orderProfileRows(db.prepare(PROFILE_CHAIN_SQL.replace('__CONFIGURED__', configured)).all(activeProfileId) as any[])
-    : db.prepare(GLOBAL_CHAIN_SQL.replace('__CONFIGURED__', configured)).all() as any[];
+  // The enabled keys decide BOTH halves of the filter: the SQL narrows to the
+  // models they can reach, and the scope pass drops the ones none of them may
+  // serve. Both halves read the same snapshot, so a key disabled between them
+  // cannot leave a model half-listed.
+  const enabledKeys = configuredOnly
+    ? db.prepare('SELECT id, platform, base_url, model_scope_json FROM api_keys WHERE enabled = 1').all() as EnabledKeyRow[]
+    : [];
+  const configured = configuredOnly ? configuredSql(enabledKeys) : { sql: '', params: [] };
+  const rawRows = activeProfileId != null
+    ? db.prepare(PROFILE_CHAIN_SQL.replace('__CONFIGURED__', configured.sql)).all(activeProfileId, ...configured.params) as any[]
+    : db.prepare(GLOBAL_CHAIN_SQL.replace('__CONFIGURED__', configured.sql)).all(...configured.params) as any[];
+  const orderedRows = activeProfileId != null ? orderProfileRows(rawRows) : rawRows;
+  // The scope half: a model no enabled key may serve is not listed at all.
+  const scopeIndex = enabledKeyScopes(enabledKeys.map(k => ({
+    platform: k.platform,
+    endpointScope: k.platform === 'custom' ? endpointScopeForBaseUrl(k.base_url) : '',
+    modelScopeJson: k.model_scope_json,
+  })));
+  // A custom row's endpoint is its own `endpoint_scope`; a legacy row without
+  // one inherits the endpoint of the key it is bound to.
+  const keyEndpoints = new Map<number, string>();
+  if (configuredOnly) {
+    for (const k of db.prepare("SELECT id, base_url FROM api_keys WHERE platform = 'custom'").all() as { id: number; base_url: string | null }[]) {
+      keyEndpoints.set(k.id, endpointScopeForBaseUrl(k.base_url));
+    }
+  }
+  const rows = configuredOnly
+    ? orderedRows.filter(row => {
+        const scopes = row.platform === 'custom'
+          ? scopeIndex.byEndpoint.get(row.endpoint_scope || keyEndpoints.get(row.key_id) || '')
+          : scopeIndex.byPlatform.get(row.platform);
+        return servableByScope(scopes, row.model_id);
+      })
+    : orderedRows;
 
   // Count usable keys per platform — enabled AND healthy/unknown status. Unified
   // with /token-usage and the routing scorer (#456) so budget pooling is computed

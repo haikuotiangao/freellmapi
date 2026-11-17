@@ -6,6 +6,7 @@ import { getDb } from '../db/index.js';
 import { getProvider, hasProvider } from '../providers/index.js';
 import { deleteUnusedCustomEndpointKey } from '../lib/custom-provider-cleanup.js';
 import { budgetInputSchema } from '../lib/budget-input.js';
+import { parseModelScope } from '../lib/model-scope.js';
 import {
   isCatalogManagedModel,
   overriddenFieldNames,
@@ -378,6 +379,20 @@ modelsRouter.delete('/:id', (req: Request, res: Response) => {
     db.prepare('DELETE FROM fallback_config WHERE model_db_id = ?').run(id);
     db.prepare('DELETE FROM profile_models WHERE model_db_id = ?').run(id);
     db.prepare('DELETE FROM models WHERE id = ?').run(id);
+    // The model must also leave every key's saved scope. Leaving it there
+    // would show it as still-enabled in the model editor while the dashboard
+    // no longer lists it — the operator would re-tick it, save, and watch
+    // nothing come back. Clearing it here makes "delete, then re-tick in the
+    // editor" an actual round trip.
+    const scopeRows = db.prepare('SELECT id, model_scope_json FROM api_keys WHERE model_scope_json IS NOT NULL')
+      .all() as { id: number; model_scope_json: string }[];
+    for (const scoped of scopeRows) {
+      const scope = parseModelScope(scoped.model_scope_json);
+      if (!scope || !scope.has(row.model_id)) continue;
+      const next = [...scope].filter(modelId => modelId !== row.model_id);
+      db.prepare('UPDATE api_keys SET model_scope_json = ? WHERE id = ?')
+        .run(next.length > 0 ? JSON.stringify(next) : null, scoped.id);
+    }
     if (row.platform === 'custom') deleteUnusedCustomEndpointKey(db, row.key_id);
     pruneUnavailableSavedFusionConfig();
   });

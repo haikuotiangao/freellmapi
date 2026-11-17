@@ -2016,6 +2016,48 @@ keysRouter.patch('/platform/:platform', (req: Request, res: Response) => {
   res.json({ success: true, enabled, updatedKeys: result.changes });
 });
 
+/**
+ * Re-register the models a key's scope names but the models table no longer
+ * has. Deleting a model from the dashboard removes its row AND clears it
+ * from every key's scope (see DELETE /api/models/:id), so re-ticking it in
+ * the editor must bring the ROW back — the dashboard lists the models table,
+ * and a scope-only save would leave the operator with a ticked box and no
+ * model on screen.
+ *
+ * Only rows that are genuinely missing are registered, and registration is
+ * explicit: it lifts a previous deletion's tombstone, which is exactly what
+ * "re-enable it in the editor" means. Failures are swallowed by the caller —
+ * a scope save must still go through when a provider is unreachable.
+ */
+function ensureScopedModelsRegistered(db: Db, keyId: number, scopeIds: string[]): void {
+  if (scopeIds.length === 0) return;
+  const key = db.prepare('SELECT platform, base_url FROM api_keys WHERE id = ?')
+    .get(keyId) as { platform: string; base_url: string | null } | undefined;
+  if (!key) return;
+
+  const missing: string[] = [];
+  if (key.platform === 'custom') {
+    if (!key.base_url) return;
+    const endpointScope = endpointScopeForBaseUrl(key.base_url);
+    const exists = db.prepare("SELECT 1 FROM models WHERE platform = 'custom' AND model_id = ? AND endpoint_scope = ?");
+    for (const modelId of scopeIds) {
+      if (!exists.get(modelId, endpointScope)) missing.push(modelId);
+    }
+    if (missing.length === 0) return;
+    db.transaction(() => registerCustomChatModels(
+      db, key.base_url as string, keyId, missing.map(modelId => ({ modelId, displayName: null })),
+    ))();
+    return;
+  }
+
+  const exists = db.prepare("SELECT 1 FROM models WHERE platform = ? AND model_id = ? AND endpoint_scope = ''");
+  for (const modelId of scopeIds) {
+    if (!exists.get(key.platform, modelId)) missing.push(modelId);
+  }
+  if (missing.length === 0) return;
+  registerDiscoveredModels(db, key.platform, missing.map(modelId => ({ modelId })), { explicit: true });
+}
+
 // Update key (toggle enable/disable or edit label)
 keysRouter.patch('/:id', (req: Request, res: Response) => {
   const id = parseInt(req.params.id as string, 10);
@@ -2116,6 +2158,13 @@ keysRouter.patch('/:id', (req: Request, res: Response) => {
   // Deduped; an empty result stores NULL, which the router reads as "unscoped".
   const scopeIds = modelScope == null ? [] : [...new Set(modelScope)];
   if (modelScope !== undefined) {
+    // A model re-ticked in the editor after a delete needs its ROW back, not
+    // just a scope entry — see ensureScopedModelsRegistered.
+    try {
+      ensureScopedModelsRegistered(db, id, scopeIds);
+    } catch {
+      // A provider that cannot be reached must not block the scope save.
+    }
     updates.push('model_scope_json = ?');
     values.push(scopeIds.length > 0 ? JSON.stringify(scopeIds) : null);
   }

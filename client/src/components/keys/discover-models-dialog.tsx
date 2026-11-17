@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -81,6 +81,11 @@ export function DiscoverModelsDialog({
 
   // A query, not a mutation: the dialog is mounted only while open, so the
   // fetch fires on mount and the component needs no reset effect.
+  //
+  // The cache is KEPT (no `gcTime: 0`): dropping it the moment the dialog
+  // closed made every re-open start from an empty list, so the models
+  // "flashed" (the previous rows) and were gone. With the cache, a re-open
+  // shows the last list at once while the fresh one loads on top of it.
   const discover = useQuery<DiscoverResponse>({
     queryKey: ['custom-endpoint-models', builtin, endpoint.keyId ?? null, endpoint.baseUrl ?? null],
     queryFn: () => apiFetch('/api/keys/custom/discover-models', {
@@ -88,10 +93,17 @@ export function DiscoverModelsDialog({
       body: JSON.stringify({ keyId: endpoint.keyId, baseUrl: endpoint.baseUrl, apiKey: endpoint.apiKey }),
     }),
     retry: false,
-    gcTime: 0,
     staleTime: 0,
   })
-  const allModels = discover.data?.models ?? []
+  // The last list that loaded successfully. A failed refetch must not blank
+  // the picker: the operator would watch the models they just ticked (and the
+  // "already added" markers) disappear for no reason.
+  const fetchedModels = discover.data?.models ?? []
+  const lastModels = useRef<DiscoveredModel[]>([])
+  useEffect(() => {
+    if (fetchedModels.length > 0) lastModels.current = fetchedModels
+  }, [fetchedModels])
+  const allModels = fetchedModels.length > 0 ? fetchedModels : lastModels.current
   const needle = filter.trim().toLowerCase()
   const models = useMemo(
     () => needle ? allModels.filter(m => m.id.toLowerCase().includes(needle)) : allModels,

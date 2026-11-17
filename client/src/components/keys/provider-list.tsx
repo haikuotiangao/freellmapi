@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -104,6 +104,11 @@ export function ProviderList({ onAddKey }: { onAddKey: (platform?: Platform) => 
   const [scopeKeyId, setScopeKeyId] = useState<number | null>(null)
   // Re-open the post-add model picker against the current catalog (#657).
   const [modelEditorKeyId, setModelEditorKeyId] = useState<number | null>(null)
+  // A snapshot of the key the picker was opened for. The keys query refreshes
+  // under the dialog, and the picker must not vanish because a refresh
+  // momentarily did not carry that key — the live row wins when it is there,
+  // the snapshot keeps the dialog mounted when it is not.
+  const modelEditorSnapshot = useRef<ApiKey | null>(null)
   // #787: keys selected for bulk enable/disable/delete within a group.
   const [selectedKeyIds, setSelectedKeyIds] = useState<Set<number>>(new Set())
   // #1504: custom models selected for bulk delete, keyed by kind:id so ids
@@ -803,7 +808,10 @@ export function ProviderList({ onAddKey }: { onAddKey: (platform?: Platform) => 
                                   <Button
                                     variant="ghost"
                                     size="icon-xs"
-                                    onClick={() => setModelEditorKeyId(k.id)}
+                                    onClick={() => {
+                                      modelEditorSnapshot.current = k
+                                      setModelEditorKeyId(k.id)
+                                    }}
                                     aria-label={t('keys.editModels')}
                                     title={t('keys.editModels')}
                                   >
@@ -1098,7 +1106,11 @@ export function ProviderList({ onAddKey }: { onAddKey: (platform?: Platform) => 
         ) : null
       })()}
       {(() => {
-        const modelKey = modelEditorKeyId !== null ? keys.find(k => k.id === modelEditorKeyId) : undefined
+        // The live key when the list still carries it, the snapshot otherwise
+        // — the picker stays open either way.
+        const modelKey = modelEditorKeyId === null
+          ? undefined
+          : (keys.find(k => k.id === modelEditorKeyId) ?? modelEditorSnapshot.current ?? undefined)
         return modelKey ? (
           <EditModelsDialog
             apiKey={modelKey}

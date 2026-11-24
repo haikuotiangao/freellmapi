@@ -22,6 +22,13 @@ export interface DiscoveredModel {
   id: string
   ownedBy: string | null
   registered: boolean
+  /** Whether this model is in THIS key's saved scope — the authoritative tick
+   *  state for "which models this key serves". */
+  inScope?: boolean
+  /** Nightly automated-test success rate (0..1), null if never tested. */
+  testSuccessRate?: number | null
+  /** Retired after 5 straight failed nightly tests; still force-addable. */
+  testUnavailable?: boolean
   /** Approximate context window in tokens when the upstream advertises one. */
   contextWindow?: number
   /** Human-readable price hint ("free", "$1.25/M in $2/M out") when present (#685). */
@@ -70,10 +77,12 @@ export function DiscoverModelsDialog({
 }) {
   const { t } = useI18n()
   const queryClient = useQueryClient()
-  // Only the ids the user ticked. Already-registered ones are rendered checked
-  // and disabled without living here, so the list reads as "what this endpoint
-  // will serve" while the Add button still counts only what is genuinely new.
+  // The ids the user ticked = the COMPLETE model range this key should serve.
+  // It is initialised from each model's `inScope` (the saved scope) on first
+  // load, and saved back as the whole scope on submit — so "picked in discover"
+  // == "shown in the editor" == "listed on the dashboard".
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const initializedRef = useRef(false)
   // Text filter over the model id. Typing "free" narrows to ids containing
   // that substring — the operator's fastest way to sweep a relay's catalog
   // for free-tier models without scrolling hundreds of rows.
@@ -102,7 +111,13 @@ export function DiscoverModelsDialog({
   const lastModels = useRef<DiscoveredModel[]>([])
   useEffect(() => {
     if (fetchedModels.length > 0) lastModels.current = fetchedModels
-  }, [fetchedModels])
+    // Initialise the tick state from the key's saved scope ONCE per dialog
+    // mount. A later refetch must not wipe the operator's in-progress picks.
+    if (!initializedRef.current && discover.isSuccess && fetchedModels.length > 0) {
+      initializedRef.current = true
+      setSelected(new Set(fetchedModels.filter(m => m.inScope !== false && !m.testUnavailable).map(m => m.id)))
+    }
+  }, [fetchedModels, discover.isSuccess])
   const allModels = fetchedModels.length > 0 ? fetchedModels : lastModels.current
   const needle = filter.trim().toLowerCase()
   const models = useMemo(
@@ -110,33 +125,62 @@ export function DiscoverModelsDialog({
     [allModels, needle],
   )
 
-  const register = useMutation<{ created: number }>({
+  const register = useMutation<{ created: number; picked: number }>({
     meta: { silenceToast: true },
-    mutationFn: () => builtin
-      ? apiFetch('/api/keys/discovered-models', {
-        method: 'POST',
-        body: JSON.stringify({ keyId: endpoint.keyId, models: [...selected] }),
+    mutationFn: async () => {
+      const picked = [...selected]
+      // Step 1: register any picked model that is not a chat model in the table
+      // yet. Registered ones are skipped by the server, which is fine — the
+      // important part is step 2: the picked set becomes the key's full scope.
+      let created = 0
+      const toRegister = picked.filter(id => {
+        const m = allModels.find(x => x.id === id)
+        return m && !m.registered
       })
-      : apiFetch('/api/keys/custom', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...(endpoint.keyId === undefined ? { baseUrl: endpoint.baseUrl } : { keyId: endpoint.keyId }),
-          ...(endpoint.apiKey ? { apiKey: endpoint.apiKey } : {}),
-          ...(endpoint.groupLabel?.trim() ? { groupLabel: endpoint.groupLabel.trim() } : {}),
-          // #1506: forward each picked model's discovered kind so the server
-          // registers generic-id media/embedding models in the right table
-          // instead of re-classifying by id and dropping them to chat.
-          models: [...selected].map(id => {
-            const discovered = allModels.find(m => m.id === id)
-            return discovered?.kind ? { model: id, kind: discovered.kind } : id
-          }),
-        }),
-      }),
+      if (toRegister.length > 0) {
+        const result: { created: number } = builtin
+          ? await apiFetch('/api/keys/discovered-models', {
+            method: 'POST',
+            body: JSON.stringify({ keyId: endpoint.keyId, models: toRegister }),
+          })
+          : await apiFetch('/api/keys/custom', {
+            method: 'POST',
+            body: JSON.stringify({
+              ...(endpoint.keyId === undefined ? { baseUrl: endpoint.baseUrl } : { keyId: endpoint.keyId }),
+              ...(endpoint.apiKey ? { apiKey: endpoint.apiKey } : {}),
+              ...(endpoint.groupLabel?.trim() ? { groupLabel: endpoint.groupLabel.trim() } : {}),
+              // #1506: forward each picked model's discovered kind so the server
+              // registers generic-id media/embedding models in the right table
+              // instead of re-classifying by id and dropping them to chat.
+              models: toRegister.map(id => {
+                const discovered = allModels.find(m => m.id === id)
+                return discovered?.kind ? { model: id, kind: discovered.kind } : id
+              }),
+            }),
+          })
+        created = result.created ?? 0
+      }
+      // Step 2: the full picked set is the key's model range. An empty pick
+      // stores NULL (= unscoped, serves all) via the keys PATCH endpoint.
+      if (endpoint.keyId !== undefined) {
+        await apiFetch(`/api/keys/${endpoint.keyId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ modelScope: picked.length > 0 ? picked : null }),
+        })
+      }
+      return { created, picked: picked.length }
+    },
     onSuccess: (data) => {
       for (const key of ['keys', 'health', 'fallback', 'models']) {
         queryClient.invalidateQueries({ queryKey: [key] })
       }
-      toast.success(t('keys.modelsAdded', { count: data.created }))
+      if (endpoint.keyId !== undefined) {
+        queryClient.invalidateQueries({ queryKey: ['key-preview-models', endpoint.keyId] })
+      }
+      // Report the number the operator actually ticked, not just newly
+      // INSERTed rows: re-ticking already-registered models only expands the
+      // key's scope (0 inserts) but is still a successful "add to this key".
+      toast.success(t('keys.modelsAdded', { count: data.picked }))
       onOpenChange(false)
       onRegistered?.()
     },
@@ -151,8 +195,12 @@ export function DiscoverModelsDialog({
     })
   }
 
-  // Built-in picks are chat-only, so a media or embedding row stays locked.
-  const locked = (m: DiscoveredModel) => m.registered || (builtin && m.kind !== undefined)
+  // Only a built-in media/embedding row stays locked — it is served by its own
+  // table and cannot be a chat model range. A previously registered model is NO
+  // LONGER locked: the tick state means "in this key's scope", so the operator
+  // can untick it to remove it from the range. Force-addable (retired) models
+  // are also selectable — they are just not ticked by default.
+  const locked = (m: DiscoveredModel) => builtin && m.kind !== undefined
   const selectable = models.filter(m => !locked(m))
   const allSelected = selectable.length > 0 && selectable.every(m => selected.has(m.id))
   const toggleAll = () => {
@@ -172,7 +220,7 @@ export function DiscoverModelsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup maxWidth="max-w-xl">
         <DialogTitle>{t('keys.discoverTitle')}</DialogTitle>
-        <p className="mt-1 text-xs text-muted-foreground">{t('keys.discoverHint')}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{t('keys.discoverScopeHint')}</p>
 
         {discover.isPending && (
           <p className="mt-4 text-xs text-muted-foreground">{t('common.loading')}</p>
@@ -217,11 +265,11 @@ export function DiscoverModelsDialog({
               {models.map(model => (
                 <label
                   key={model.id}
-                  className={`flex items-center gap-2 px-3 py-2 text-xs ${locked(model) ? 'bg-muted/40' : 'cursor-pointer hover:bg-muted/30'}`}
+                  className={`flex items-center gap-2 px-3 py-2 text-xs ${locked(model) ? 'bg-muted/40' : 'cursor-pointer hover:bg-muted/30'} ${model.testUnavailable ? 'bg-destructive/5' : ''}`}
                 >
                   <input
                     type="checkbox"
-                    checked={model.registered || selected.has(model.id)}
+                    checked={selected.has(model.id)}
                     disabled={locked(model)}
                     onChange={() => toggle(model.id)}
                     className="size-4 accent-primary"
@@ -261,7 +309,24 @@ export function DiscoverModelsDialog({
                   {model.ownedBy && (
                     <span className="shrink-0 text-[11px] text-muted-foreground">{model.ownedBy}</span>
                   )}
-                  {model.registered && (
+                  {model.testSuccessRate != null && (
+                    <span
+                      title={t('models.testSuccessRate')}
+                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] tabular-nums ${
+                        model.testSuccessRate >= 0.5
+                          ? 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-400'
+                          : 'bg-amber-600/15 text-amber-700 dark:text-amber-400'
+                      }`}
+                    >
+                      {Math.round(model.testSuccessRate * 100)}%
+                    </span>
+                  )}
+                  {model.testUnavailable && (
+                    <span title={t('models.testUnavailableHint')} className="shrink-0 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] text-destructive">
+                      {t('models.testUnavailable')}
+                    </span>
+                  )}
+                  {model.registered && !model.testUnavailable && (
                     <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                       {t('keys.discoverAlreadyAdded')}
                     </span>

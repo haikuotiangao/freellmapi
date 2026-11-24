@@ -36,6 +36,7 @@ import {
 import type { Db } from '../db/types.js';
 import type { Platform } from '@freellmapi/shared/types.js';
 import { parseModelScope, extendKeyScope } from '../lib/model-scope.js';
+import { getModelTestStats, clearUnavailable, resetTestStreak } from '../services/model-auto-test.js';
 import { KEY_PROXY_URL_ERROR, KEY_PROXY_URL_MAX, decryptProxyUrl, encryptProxyUrl, isValidKeyProxyUrl, maskProxyUrl } from '../lib/key-proxy.js';
 import { isLoopbackRequest } from '../lib/loopback.js';
 import { availableKeylessProviders, dismissAvailableKeylessProviders, enableAvailableKeylessProviders } from '../services/keyless-defaults.js';
@@ -1132,6 +1133,36 @@ const discoverModelsSchema = z.object({
   { message: 'baseUrl or keyId is required' },
 );
 
+// Attach nightly-test state to each discovered model so the picker can show a
+// red "unavailable" badge on models retired after 5 failed attempts. The badge
+// is advisory: the operator can still tick the row and force-add it back.
+// `scope` (this key's saved model_scope) adds a per-key `inScope` flag — the
+// authoritative answer to "is this model in THIS key's range", used by the
+// picker to initialise the tick state (registered-in-the-table is a different
+// question and cannot stand in for it on custom endpoints).
+function withTestStats<T extends { id: string }>(
+  db: Db, platform: string, endpointScope: string, models: T[], scope: Set<string> | null = null,
+) {
+  return models.map(m => {
+    const stats = getModelTestStats(db, platform, m.id, endpointScope);
+    return {
+      ...m,
+      testSuccessRate: stats.successCount + stats.failureCount > 0
+        ? stats.successCount / (stats.successCount + stats.failureCount) : null,
+      testUnavailable: stats.unavailable,
+      inScope: scope === null || scope.has(m.id),
+    };
+  });
+}
+
+/** Read a key's saved scope, or null (= unrestricted / all models). */
+function keyScope(db: Db, keyId: number | null | undefined): Set<string> | null {
+  if (keyId == null) return null;
+  const row = db.prepare('SELECT model_scope_json FROM api_keys WHERE id = ?')
+    .get(keyId) as { model_scope_json: string | null } | undefined;
+  return parseModelScope(row?.model_scope_json ?? null);
+}
+
 keysRouter.post('/custom/discover-models', async (req: Request, res: Response) => {
   const parsed = discoverModelsSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -1181,12 +1212,13 @@ keysRouter.post('/custom/discover-models', async (req: Request, res: Response) =
     }
 
     const models = discovered.map(m => ({ ...m, registered: registeredIds.has(m.id) }));
+    const decorated = withTestStats(db, 'custom', endpointScopeForBaseUrl(endpoint.baseUrl), models, keyScope(db, endpoint.keyId));
     res.json({
       baseUrl: endpoint.baseUrl,
       keyId: endpoint.keyId,
-      models,
-      total: models.length,
-      registeredCount: models.filter(m => m.registered).length,
+      models: decorated,
+      total: decorated.length,
+      registeredCount: decorated.filter(m => m.registered).length,
     });
   } catch (err: any) {
     if (err instanceof ModelDiscoveryError) {
@@ -1258,7 +1290,10 @@ keysRouter.post('/preview-models', async (req: Request, res: Response) => {
       kind: m.kind,
       registered: inScope(m.id),
     }));
-    res.json({ keyId: key.id, platform: key.platform, models, total: models.length });
+    const endpointScope = key.platform === 'custom'
+      ? endpointScopeForBaseUrl(key.base_url ?? '') : '';
+    const decorated = withTestStats(db, key.platform, endpointScope, models, scope);
+    res.json({ keyId: key.id, platform: key.platform, models: decorated, total: decorated.length });
   } catch (err: any) {
     if (err instanceof ModelDiscoveryError) {
       res.status(err.status).json({ error: { message: err.message, type: 'upstream_error' } });
@@ -1305,13 +1340,14 @@ async function discoverForBuiltinKey(key: BuiltinKeyRow, apiKey: string | undefi
     const discovered = await discoverBuiltinModels(eligibility.provider, key, apiKey);
     const registeredIds = registeredModelIds(db, key.platform);
     const models = discovered.map(m => ({ ...m, registered: registeredIds.has(m.id) }));
+    const decorated = withTestStats(db, key.platform, '', models, keyScope(db, key.id));
     res.json({
       platform: key.platform,
       baseUrl: eligibility.provider.modelsUrl.replace(/\/models\/?$/, ''),
       keyId: key.id,
-      models,
-      total: models.length,
-      registeredCount: models.filter(m => m.registered).length,
+      models: decorated,
+      total: decorated.length,
+      registeredCount: decorated.filter(m => m.registered).length,
     });
   } catch (err: any) {
     if (err instanceof ModelDiscoveryError) {
@@ -1356,6 +1392,9 @@ keysRouter.post('/discovered-models', (req: Request, res: Response) => {
   // A picked model joins a SCOPED key's scope, so it is servable and shows up
   // on the dashboard. An unscoped key (NULL) serves everything already.
   extendKeyScope(db, key.id, result.created);
+  // Force-added retired models start a fresh test streak; the unavailable
+  // badge stays until a real test passes.
+  for (const modelId of [...result.created, ...ids]) resetTestStreak(db, key.platform, modelId, '');
   res.json({
     platform: key.platform,
     created: result.created.length,
@@ -1595,6 +1634,10 @@ keysRouter.post('/custom', async (req: Request, res: Response) => {
   // dashboard would not list them — the opposite of the pick. An unscoped key
   // (NULL) already serves them all.
   extendKeyScope(db, keyId, registered.map(r => r.model));
+  // Force-added retired models start a fresh test streak (badge stays until a
+  // passing test clears it).
+  const customScope = endpointScopeForBaseUrl(baseUrl);
+  for (const r of registered) resetTestStreak(db, 'custom', r.model, customScope);
   if (parsed.data.groupLabel !== undefined) setCustomEndpointGroup(db, keyId, normalizeGroupLabel(parsed.data.groupLabel));
 
   const mediaRegistered: Array<{ modelDbId: number; model: string; modality: string; created: boolean }> = [];

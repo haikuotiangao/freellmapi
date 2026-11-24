@@ -17,7 +17,6 @@ import { getActiveProfileId } from '../services/profile-models.js';
 import { endpointScopeForBaseUrl, qualifiedModelMemberId } from '../lib/endpoint-scope.js';
 import { overriddenFieldNames } from '../services/model-state.js';
 import { parseModelScope, scopeAllows, enabledKeyScopes, servableByScope } from '../lib/model-scope.js';
-import { endpointScopeForBaseUrl } from '../lib/endpoint-scope.js';
 import { getQuotaOutlook } from '../services/quota-outlook.js';
 import { getDecisionRoutingStatus, setDecisionRoutingSettings } from '../services/routing-decision.js';
 
@@ -167,13 +166,18 @@ const MODEL_COLUMNS = `
            m.key_id, m.endpoint_scope, m.source AS model_source, ak.label AS key_label,
            mo.overrides_json IS NOT NULL AS has_overrides,
            mo.overrides_json,
-           ts.source AS tombstone_source, ts.reason AS tombstone_reason`;
+           ts.source AS tombstone_source, ts.reason AS tombstone_reason,
+           mts.success_count AS test_success_count, mts.failure_count AS test_failure_count,
+           mts.unavailable AS test_unavailable`;
 
 const MODEL_JOINS = `
     LEFT JOIN api_keys ak ON ak.id = m.key_id
     LEFT JOIN model_overrides mo ON mo.platform = m.platform AND mo.model_id = m.model_id
     LEFT JOIN catalog_model_tombstones ts
-      ON ts.kind = 'chat' AND ts.platform = m.platform AND ts.model_id = m.model_id`;
+      ON ts.kind = 'chat' AND ts.platform = m.platform AND ts.model_id = m.model_id
+    LEFT JOIN model_test_stats mts
+      ON mts.platform = m.platform AND mts.model_id = m.model_id
+     AND mts.endpoint_scope = COALESCE(m.endpoint_scope, '')`;
 
 // The whole catalog seen THROUGH one chain (#1021). A chain is a set of opt-ins,
 // not a copy of the catalog: a model the chain names keeps the priority and the
@@ -440,6 +444,10 @@ fallbackRouter.get('/', (req: Request, res: Response) => {
       retiredUpstream: r.tombstone_source === 'upstream_eol',
       retiredReason: r.tombstone_source === 'upstream_eol' ? (r.tombstone_reason ?? null) : null,
       keyCount: rowKeyCount,
+      // Nightly automated test stats (#fork).
+      testSuccessRate: (r.test_success_count != null && (r.test_success_count + r.test_failure_count) > 0)
+        ? r.test_success_count / (r.test_success_count + r.test_failure_count) : null,
+      testUnavailable: Number(r.test_unavailable ?? 0) === 1,
     };
   }));
 });

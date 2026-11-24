@@ -53,6 +53,7 @@ import { ReliabilityFloorControl } from '@/components/reliability-floor-control'
 import { ProviderMomentControl } from '@/components/provider-moment-control'
 import { DecisionRoutingPopover, DecisionSetupGuide } from '@/components/decision-routing-popover'
 import { ChainManager } from '@/components/chain-manager'
+import { ModelAutoTestControl } from '@/components/model-auto-test-control'
 
 // `tKey` is the i18n suffix under `strategies.*` (label) and `strategies.*Blurb`.
 // It differs from the routing `key` for Manual, whose strategy id is 'priority'.
@@ -704,6 +705,8 @@ export default function FallbackPage() {
             <p className="text-xs text-muted-foreground">
               {t('models.enabledOfShown', { enabled: visibleEnabledCount, shown: visibleGroups.length })}
             </p>
+
+            <ModelAutoTestControl />
 
             {filtersActive && (
               <div className="flex items-center justify-between text-xs text-muted-foreground">

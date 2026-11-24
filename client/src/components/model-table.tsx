@@ -129,6 +129,9 @@ export function ModelTableHead() {
             <span className="underline decoration-dotted underline-offset-2 cursor-help">{t('strategies.scoreColumn')}</span>
           </Tooltip>
         </th>
+        <th className="py-2 pr-3 font-medium text-right" title={t('models.testSuccessRateTooltip')}>
+          {t('models.testSuccessRate')}
+        </th>
         <th className="py-2 pr-3 font-medium text-right">{t('models.columnOn')}</th>
       </tr>
     </thead>
@@ -267,6 +270,23 @@ export function RowContent({
       <td className="py-2 pr-3 align-middle text-right font-mono text-xs font-medium tabular-nums">
         {row.score !== undefined ? row.score.toFixed(3) : '–'}
       </td>
+      <td className="py-2 pr-3 align-middle text-right tabular-nums">
+        <div className="flex items-center justify-end gap-1.5">
+          {row.testSuccessRate != null && (
+            <span className={`text-xs ${
+              row.testSuccessRate >= 0.5 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+            }`} title={t('models.testSuccessRateTooltip')}>
+              {Math.round(row.testSuccessRate * 100)}%
+            </span>
+          )}
+          {row.testUnavailable && (
+            <span className="text-[10px] rounded bg-destructive/15 px-1.5 py-0.5 text-destructive" title={t('models.testUnavailableHint')}>
+              {t('models.testUnavailable')}
+            </span>
+          )}
+          {row.testSuccessRate == null && !row.testUnavailable && <span className="text-muted-foreground/40">—</span>}
+        </div>
+      </td>
       <td className="py-2 pr-3 align-middle text-right">
         <Switch checked={row.enabled} onCheckedChange={(c) => onToggle(row.modelDbId, c)} />
       </td>
@@ -396,6 +416,12 @@ export function GroupHeaderCells({ group, rank, dragHandle, editableRank, onMove
   const tools = group.members.some(m => m.supportsTools)
   const quota = groupQuotaBadge(group.members, t)
   const maxCtx = groupMaxContext(group.members)
+  // Aggregate nightly test success across the group's members that were tested.
+  const testedMembers = group.members.filter(m => m.testSuccessRate != null)
+  const groupRate = testedMembers.length > 0
+    ? Math.min(...testedMembers.map(m => m.testSuccessRate!))
+    : null
+  const groupUnavailable = group.members.some(m => m.testUnavailable)
   // The model name links to its own page, which lists every provider that serves
   // it (replaces the old inline expansion).
   const detailId = encodeURIComponent(group.members[0].canonicalId ?? group.members[0].modelId)
@@ -462,6 +488,23 @@ export function GroupHeaderCells({ group, rank, dragHandle, editableRank, onMove
             </span>
           </Tooltip>
         )}
+      </td>
+      <td className="py-2 pr-3 align-middle text-right tabular-nums">
+        <div className="flex items-center justify-end gap-1.5">
+          {groupRate != null && (
+            <span className={`text-xs ${
+              groupRate >= 0.5 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+            }`} title={t('models.testSuccessRateTooltip')}>
+              {Math.round(groupRate * 100)}%
+            </span>
+          )}
+          {groupUnavailable && (
+            <span className="text-[10px] rounded bg-destructive/15 px-1.5 py-0.5 text-destructive" title={t('models.testUnavailableHint')}>
+              {t('models.testUnavailable')}
+            </span>
+          )}
+          {groupRate == null && !groupUnavailable && <span className="text-muted-foreground/40">—</span>}
+        </div>
       </td>
       <td className="py-2 pr-3 align-middle" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1">

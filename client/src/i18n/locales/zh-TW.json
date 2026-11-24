@@ -296,7 +296,18 @@
     "disableAllHint": "停用所有顯示的模型，然後儲存",
     "enabledOfShown": "顯示的 {shown} 個模型中有 {enabled} 個在鏈中",
     "deleteModel": "刪除模型",
-    "modelDeleted": "模型已刪除，可在編輯模型中重新加入。"
+    "modelDeleted": "模型已刪除，可在編輯模型中重新加入。",
+    "testSuccessRate": "测试成功率",
+    "testSuccessRateTooltip": "每日自動模型測試的成功率",
+    "testUnavailable": "不可用",
+    "testUnavailableHint": "連續 5 次夜間測試失敗。可強制新增重試。",
+    "testAutoLabel": "每日模型測試",
+    "testAutoHint": "每天測試所有模型，連續 5 次失敗將刪除該模型。",
+    "testTimeLabel": "測試時間",
+    "testRunNow": "立即測試",
+    "testRunning": "測試中…",
+    "testRunDone": "已测试 {tested} 个模型。删除 {retired} 个，仍失败 {failed} 个。",
+    "testScheduleSaved": "測試計劃已儲存"
   },
   "strategies": {
     "explore": "探索未測模型",
@@ -754,7 +765,8 @@
     "editModelsLiveHint": "顯示廠商即時模型清單，已下架的模型不再出現。",
     "editModelsLiveFailed": "無法連線廠商，已改用儲存的目錄。你仍可照常勾選儲存。",
     "discoverFilterPlaceholder": "依名稱篩選模型（如 free）",
-    "discoverNoMatch": "沒有符合的模型。"
+    "discoverNoMatch": "沒有符合的模型。",
+    "discoverScopeHint": "勾選該金鑰要服務的模型。儲存後這些就是它的模型範圍。"
   },
   "backups": {
     "title": "Backups",

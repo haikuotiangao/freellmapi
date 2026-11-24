@@ -7,6 +7,7 @@ import { startWakeDetect } from './lib/wake-detect.js';
 import { startCatalogSync } from './services/catalog-sync.js';
 import { startCooldownProbe } from './services/cooldown-probe.js';
 import { startModelProbe } from './services/model-probe.js';
+import { startModelAutoTest } from './services/model-auto-test.js';
 import { startCustomModelSync } from './services/custom-model-sync.js';
 import { startBuiltinModelDiscovery } from './services/builtin-model-discovery.js';
 import { installProcessSafetyNet } from './lib/process-safety-net.js';
@@ -86,6 +87,7 @@ async function main() {
     startCatalogSync(scheduler);
     startCooldownProbe(scheduler);
     startModelProbe(scheduler);
+    startModelAutoTest(scheduler);
     startDbBackupPump(getDb(), scheduler, config.dbPath ?? undefined);
     startBackupScheduler(scheduler);
     startCustomModelSync(getDb(), scheduler);

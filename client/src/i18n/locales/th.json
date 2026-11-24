@@ -296,7 +296,18 @@
     "disableAllHint": "Turn off every model shown, then Save",
     "enabledOfShown": "{enabled} of {shown} shown models are in the chain",
     "deleteModel": "Delete model",
-    "modelDeleted": "Model deleted. You can add it back from the model picker."
+    "modelDeleted": "Model deleted. You can add it back from the model picker.",
+    "testSuccessRate": "Test success",
+    "testSuccessRateTooltip": "Success rate from the nightly automated model test",
+    "testUnavailable": "Unavailable",
+    "testUnavailableHint": "Failed all 5 nightly tests. Force-add to retry.",
+    "testAutoLabel": "Nightly model test",
+    "testAutoHint": "Tests every model daily. 5 straight failures retire the model.",
+    "testTimeLabel": "Test time",
+    "testRunNow": "Run test now",
+    "testRunning": "Testing…",
+    "testRunDone": "Tested {tested} models. Retired {retired}, still failing {failed}.",
+    "testScheduleSaved": "Test schedule saved"
   },
   "strategies": {
     "explore": "สำรวจโมเดลที่ยังไม่ได้วัดผล",
@@ -754,7 +765,8 @@
     "editModelsLiveHint": "Showing the provider's live model list. Retired models are gone.",
     "editModelsLiveFailed": "Could not reach the provider — showing the saved catalog instead. You can still save your selection.",
     "discoverFilterPlaceholder": "Filter models by name (e.g. free)",
-    "discoverNoMatch": "No models match this filter."
+    "discoverNoMatch": "No models match this filter.",
+    "discoverScopeHint": "Tick the models this key should serve. Saving makes exactly these your model range."
   },
   "backups": {
     "title": "Backups",

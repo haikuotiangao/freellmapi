@@ -22,6 +22,8 @@ interface LiveDiscoveredModel {
   contextWindow?: number
   vision?: boolean
   kind?: string
+  testSuccessRate?: number | null
+  testUnavailable?: boolean
 }
 interface LivePreview {
   models: LiveDiscoveredModel[]
@@ -35,6 +37,8 @@ interface Candidate {
   contextWindow: number | null
   priceNote?: string
   isFree?: boolean
+  testSuccessRate?: number | null
+  testUnavailable?: boolean
 }
 
 export function EditModelsDialog({
@@ -110,6 +114,8 @@ export function EditModelsDialog({
         contextWindow: m.contextWindow ?? null,
         priceNote: m.priceNote,
         isFree: m.isFree,
+        testSuccessRate: m.testSuccessRate,
+        testUnavailable: m.testUnavailable,
       }))
     : catalogCandidates
   // The very first live fetch: show the loading line instead of the static
@@ -285,6 +291,23 @@ export function EditModelsDialog({
                   {model.contextWindow != null && model.contextWindow > 0 && (
                     <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground tabular-nums">
                       {t('models.ctxBadge', { size: formatContext(model.contextWindow) })}
+                    </span>
+                  )}
+                  {model.testSuccessRate != null && (
+                    <span
+                      title={t('models.testSuccessRate')}
+                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] tabular-nums ${
+                        model.testSuccessRate >= 0.5
+                          ? 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-400'
+                          : 'bg-amber-600/15 text-amber-700 dark:text-amber-400'
+                      }`}
+                    >
+                      {Math.round(model.testSuccessRate * 100)}%
+                    </span>
+                  )}
+                  {model.testUnavailable && (
+                    <span title={t('models.testUnavailableHint')} className="shrink-0 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] text-destructive">
+                      {t('models.testUnavailable')}
                     </span>
                   )}
                 </label>

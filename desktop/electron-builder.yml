@@ -16,7 +16,10 @@ files:
 # attaches the files itself. See #703.
 publish:
   provider: github
-  owner: tashfeenahmed
+  # Fork build: updates must point at our own releases, never upstream's.
+  # Otherwise electron-updater silently pulls a newer upstream build over our
+  # customised one on the next background check + quit.
+  owner: haikuotiangao
   repo: freellmapi
 asar: true
 # Linux chrome-sandbox must be mode 4755 (setuid) in the .deb; otherwise

@@ -27,6 +27,10 @@ import { sanitizeProviderErrorMessage } from '../lib/error-redaction.js';
 import { recordRequest, recordTokens } from '../services/ratelimit.js';
 import { recordMonthlyUsage } from '../services/key-budget.js';
 import { contentToString } from '../lib/content.js';
+import {
+  runModelAutoTest, readTestSchedule, setTestSchedule,
+  getModelTestStats, clearUnavailable,
+} from '../services/model-auto-test.js';
 
 export const modelsRouter = Router();
 
@@ -499,22 +503,30 @@ modelsRouter.get('/', (_req: Request, res: Response) => {
   const models = activeProfileId == null ? db.prepare(`
     SELECT m.*, fc.priority, fc.enabled as fallback_enabled,
            mo.overrides_json IS NOT NULL AS has_overrides, mo.overrides_json,
-           ak.label AS key_label
+           ak.label AS key_label,
+           ts.success_count AS testSuccessCount, ts.failure_count AS testFailureCount,
+           ts.unavailable AS testUnavailable
     FROM models m
     LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
     LEFT JOIN model_overrides mo ON mo.platform = m.platform AND mo.model_id = m.model_id
     LEFT JOIN api_keys ak ON ak.id = m.key_id
+    LEFT JOIN model_test_stats ts ON ts.platform = m.platform AND ts.model_id = m.model_id
+       AND ts.endpoint_scope = COALESCE(m.endpoint_scope, '')
     ORDER BY COALESCE(fc.priority, m.intelligence_rank) ASC
   `).all() as any[] : db.prepare(`
     SELECT m.*, COALESCE(pm.priority, fc.priority) AS priority,
            COALESCE(pm.enabled, fc.enabled) AS fallback_enabled,
            mo.overrides_json IS NOT NULL AS has_overrides, mo.overrides_json,
-           ak.label AS key_label
+           ak.label AS key_label,
+           ts.success_count AS testSuccessCount, ts.failure_count AS testFailureCount,
+           ts.unavailable AS testUnavailable
     FROM models m
     LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
     LEFT JOIN profile_models pm ON pm.profile_id = ? AND pm.model_db_id = m.id
     LEFT JOIN model_overrides mo ON mo.platform = m.platform AND mo.model_id = m.model_id
     LEFT JOIN api_keys ak ON ak.id = m.key_id
+    LEFT JOIN model_test_stats ts ON ts.platform = m.platform AND ts.model_id = m.model_id
+       AND ts.endpoint_scope = COALESCE(m.endpoint_scope, '')
     ORDER BY COALESCE(pm.priority, fc.priority, m.intelligence_rank) ASC
   `).all(activeProfileId) as any[];
 
@@ -564,7 +576,88 @@ modelsRouter.get('/', (_req: Request, res: Response) => {
     overrideFields: overriddenFieldNames(m.overrides_json),
     hasProvider: hasProvider(m.platform),
     keyCount: keyCountMap.get(m.platform) ?? 0,
+    // Nightly automated test stats (#fork). Success rate is 0..1 or null when
+    // the model has never been tested. unavailable survives a 5-strike retire.
+    testSuccessRate: (m.testSuccessCount != null && (m.testSuccessCount + m.testFailureCount) > 0)
+      ? m.testSuccessCount / (m.testSuccessCount + m.testFailureCount)
+      : null,
+    testAttempts: (m.testSuccessCount ?? 0) + (m.testFailureCount ?? 0),
+    testUnavailable: Number(m.testUnavailable ?? 0) === 1,
   }));
 
   res.json(result);
+});
+
+// ── Nightly automated model test (#fork) ────────────────────────────────────
+
+// Read / update the nightly test schedule.
+modelsRouter.get('/test-schedule', (_req: Request, res: Response) => {
+  res.json(readTestSchedule());
+});
+
+modelsRouter.put('/test-schedule', (req: Request, res: Response) => {
+  const parsed = z.object({
+    enabled: z.boolean(),
+    time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'time must be HH:MM'),
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: parsed.error.issues.map(e => e.message).join(', ') } });
+    return;
+  }
+  setTestSchedule(parsed.data.enabled, parsed.data.time);
+  res.json(readTestSchedule());
+});
+
+// Trigger a full pass on demand. Carries a simple overlap guard so two admins
+// cannot accidentally run two passes at once.
+let manualRunInFlight = false;
+modelsRouter.post('/test-run', async (_req: Request, res: Response) => {
+  if (manualRunInFlight) {
+    res.status(409).json({ error: { message: 'a test pass is already running' } });
+    return;
+  }
+  manualRunInFlight = true;
+  try {
+    const summary = await runModelAutoTest(getDb());
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: { message: err?.message ?? 'test pass failed' } });
+  } finally {
+    manualRunInFlight = false;
+  }
+});
+
+// Per-model test stats (used by the model picker / detail views).
+modelsRouter.get('/:id/test-stats', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: { message: 'Invalid id' } });
+    return;
+  }
+  const row = getDb().prepare('SELECT platform, model_id, endpoint_scope FROM models WHERE id = ?')
+    .get(id) as { platform: string; model_id: string; endpoint_scope: string } | undefined;
+  if (!row) {
+    res.status(404).json({ error: { message: `Unknown model ${id}` } });
+    return;
+  }
+  const stats = getModelTestStats(getDb(), row.platform, row.model_id, row.endpoint_scope || '');
+  res.json({ ...stats, successRate: stats.successCount + stats.failureCount > 0
+    ? stats.successCount / (stats.successCount + stats.failureCount) : null });
+});
+
+// Clear a model's "unavailable" badge after a force-added model passes again.
+modelsRouter.post('/:id/clear-unavailable', (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: { message: 'Invalid id' } });
+    return;
+  }
+  const row = getDb().prepare('SELECT platform, model_id, endpoint_scope FROM models WHERE id = ?')
+    .get(id) as { platform: string; model_id: string; endpoint_scope: string } | undefined;
+  if (!row) {
+    res.status(404).json({ error: { message: `Unknown model ${id}` } });
+    return;
+  }
+  clearUnavailable(getDb(), row.platform, row.model_id, row.endpoint_scope || '');
+  res.json({ success: true });
 });

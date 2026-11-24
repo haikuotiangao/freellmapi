@@ -296,7 +296,18 @@
     "disableAllHint": "停用所有显示的模型，然后保存",
     "enabledOfShown": "显示的 {shown} 个模型中有 {enabled} 个在链中",
     "deleteModel": "删除模型",
-    "modelDeleted": "模型已删除，可在编辑模型中重新添加。"
+    "modelDeleted": "模型已删除，可在编辑模型中重新添加。",
+    "testSuccessRate": "测试成功率",
+    "testSuccessRateTooltip": "每日自动模型测试的成功率",
+    "testUnavailable": "不可用",
+    "testUnavailableHint": "连续 5 次夜间测试失败。可强行添加重试。",
+    "testAutoLabel": "每日模型测试",
+    "testAutoHint": "每天测试所有模型，连续 5 次失败将删除该模型。",
+    "testTimeLabel": "测试时间",
+    "testRunNow": "立即测试",
+    "testRunning": "测试中…",
+    "testRunDone": "已测试 {tested} 个模型。删除 {retired} 个，仍失败 {failed} 个。",
+    "testScheduleSaved": "测试计划已保存"
   },
   "strategies": {
     "explore": "探索未测模型",
@@ -754,7 +765,8 @@
     "editModelsLiveHint": "显示厂商实时模型列表，已下架的模型不再出现。",
     "editModelsLiveFailed": "无法连接厂商，已改用保存的目录。你仍可照常勾选保存。",
     "discoverFilterPlaceholder": "按名称筛选模型（如 free）",
-    "discoverNoMatch": "没有匹配的模型。"
+    "discoverNoMatch": "没有匹配的模型。",
+    "discoverScopeHint": "勾选该密钥要服务的模型。保存后这些就是它的模型范围。"
   },
   "backups": {
     "title": "备份",

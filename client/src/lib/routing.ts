@@ -52,6 +52,10 @@ export interface FallbackEntry {
   retiredUpstream?: boolean
   retiredReason?: string | null
   keyCount: number
+  /** Nightly automated-test success rate (0..1), null if never tested. */
+  testSuccessRate?: number | null
+  /** Retired after 5 straight failed nightly tests. */
+  testUnavailable?: boolean
   // Logical-model grouping (sent by the server when unify is relevant). Absent
   // for ungrouped rows; the UI falls back to a per-row "solo" group then.
   groupKey?: string

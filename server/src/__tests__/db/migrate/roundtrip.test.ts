@@ -157,6 +157,7 @@ describe('migration round trip', () => {
         KEY_VERIFICATION_BASIS_FILENAME,
         MODEL_MONTHLY_USAGE_FILENAME,
         PROFILE_ROUTING_STRATEGY_FILENAME,
+        '20261124_000001_model_test_stats.ts',
       ]);
     } finally {
       db.close();

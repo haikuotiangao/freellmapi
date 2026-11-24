@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, dialog, ipcMain, clipboard, nativeTheme, net, screen, shell, type Tray } from 'electron';
-import { startServer, ensureSessionToken, getUnifiedApiKey, isAutoUpdateCheckEnabled, backupBeforeUpdate, outboundProxyUrl, setCatalogFallbackFetch } from './server.mjs';
+import { startServer, ensureSessionToken, getUnifiedApiKey, backupBeforeUpdate, outboundProxyUrl, setCatalogFallbackFetch } from './server.mjs';
 import { loadConfig, saveConfig } from './config.js';
 import { installFileLogger } from './logger.js';
 import { buildTray, refreshTrayLocale, refreshTrayMenu } from './tray.js';
@@ -289,9 +289,10 @@ if (!app.requestSingleInstanceLock()) {
     process.env.FREEAPI_VERSION = app.getVersion();
 
     initUpdater({
-      autoCheckEnabled: () => {
-        try { return isAutoUpdateCheckEnabled(); } catch { return false; }
-      },
+      // Fork build: never phone home on its own. An earlier background check
+      // pulled a newer upstream release over our customised build on quit,
+      // silently undoing every fork change. Updates are manual-only here.
+      autoCheckEnabled: () => false,
       backupBeforeUpdate,
       outboundProxyUrl: () => {
         try { return outboundProxyUrl(); } catch { return ''; }
